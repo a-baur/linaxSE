@@ -10,9 +10,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12"]
 
     steps:
       - name: Check out repo
@@ -21,13 +18,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version-file: .python-version
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
 
       - name: Sync environment (locked)
-        run: uv sync --locked
+        run: uv sync --locked --dev
 
       - name: Run tests with coverage
         run: |
