@@ -26,10 +26,7 @@ jobs:
       - name: Sync environment (locked)
         run: uv sync --dev
 
+      # TODO: add proper coverage test
       - name: Run tests with coverage
         run: |
-          uv run pytest \
-            --cov=linax \
-            --cov-branch \
-            --cov-report=term-missing \
-            --cov-fail-under=0
+          uv run pytest

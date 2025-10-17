@@ -28,9 +28,9 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
 
-      # pre-commit uses system python; uv handles deps in its own venv
-      - name: Install pre-commit hooks
-        run: uv run pre-commit install-hooks
+      # # pre-commit uses system python; uv handles deps in its own venv
+      # - name: Install pre-commit hooks
+      #   run: uv run pre-commit install-hooks
 
       - name: Get changed files
         id: changed-files
