@@ -20,7 +20,7 @@ license-files = ["LICEN[CS]E.*"]
 # keywords = []
 # classifiers = []
 
-requires-python = ">=3.12"
+requires-python = "==3.12.*"
 dependencies = [
   "einops>=0.8.1",
   "equinox>=0.13.1",
@@ -78,3 +78,7 @@ convention = "google"
 [tool.ruff.format]
 quote-style = "double"
 docstring-code-format = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
