@@ -26,8 +26,6 @@ __pypackages__/
 # Uv & Hatch specifics
 .uv/
 .hatch/
-uv.lock
-uv.lock.backup
 
 # Environments
 .venv/
@@ -36,7 +34,6 @@ env/
 ENV/
 env.bak/
 venv.bak/
-.python-version
 
 # Tests and Coverage
 .pytest_cache/
