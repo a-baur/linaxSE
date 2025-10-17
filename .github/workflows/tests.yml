@@ -24,7 +24,7 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       - name: Sync environment (locked)
-        run: uv sync --locked --dev
+        run: uv sync --dev
 
       - name: Run tests with coverage
         run: |
