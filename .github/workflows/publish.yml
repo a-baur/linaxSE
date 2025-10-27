@@ -1,6 +1,7 @@
-name: Publish to PyPI
+name:
+  Publish to PyPI
 
-#TODO: only publish on main branch
+  #TODO: only publish on main branch
 on:
   push:
     tags:
@@ -13,6 +14,7 @@ jobs:
     environment: pypi
     permissions:
       id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
