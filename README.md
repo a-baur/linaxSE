@@ -1,10 +1,16 @@
-# Linax - State Space Models in Jax
+<div align="center">
+  <img alt="Linax Banner" src="https://raw.githubusercontent.com/camail-official/linax/refs/heads/feature/docs/assets/logo.png" style="padding-bottom: 2rem;" />
+</div>
+
+
+# linax - State Space Models in Jax
 
 <div align="center">
 
 [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white&style=flat-square)](https://discord.gg/VazrGCxeT7)
 
 </div>
+
 
 `linax` is a collection of State space models in `JAX`.
 
