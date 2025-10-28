@@ -35,7 +35,7 @@ class MNISTSeq(VisionDataset):
         download: If True, downloads the dataset from the internet.
         transform: Optional transform to be applied on a sample.
         target_transform: Optional transform to be applied on the target.
-        timesteps: Maximum sequence length (sequences are padded/truncated to this length).
+        pad_to: Maximum sequence length (sequences are padded/truncated to this length).
         train_val_split: Fraction of training data to use for training (rest is validation).
         stage: Split to use - "train", "val", or "test". If None, inferred from `train` arg.
 
@@ -67,7 +67,7 @@ class MNISTSeq(VisionDataset):
         download: bool = False,
         transform: Callable | None = None,
         target_transform: Callable | None = None,
-        timesteps: int = 128,
+        pad_to: int = 128,
         train_val_split: float = 0.8,
         stage: str | None = None,
     ):
@@ -75,7 +75,7 @@ class MNISTSeq(VisionDataset):
         super().__init__(root, transform=transform, target_transform=target_transform)
 
         # Store configuration
-        self.timesteps = timesteps
+        self.pad_to = pad_to
         self.train_val_split = train_val_split
 
         # Determine which split to use
@@ -241,13 +241,13 @@ class MNISTSeq(VisionDataset):
                 sequence = np.loadtxt(filepath)
 
                 # Pad or truncate to fixed length
-                if sequence.shape[0] < self.timesteps:
+                if sequence.shape[0] < self.pad_to:
                     # Pad with zeros if sequence is too short
-                    padding = ((0, self.timesteps - sequence.shape[0]), (0, 0))
+                    padding = ((0, self.pad_to - sequence.shape[0]), (0, 0))
                     sequence = np.pad(sequence, padding, mode="constant")
                 else:
                     # Truncate if sequence is too long
-                    sequence = sequence[: self.timesteps]
+                    sequence = sequence[: self.pad_to]
 
                 data_list.append(sequence)
 
@@ -266,7 +266,7 @@ class MNISTSeq(VisionDataset):
 
         Returns:
             Tuple of (data, labels) where:
-                - data: np.ndarray of shape (n_samples, timesteps, 4)
+                - data: np.ndarray of shape (n_samples, pad_to, 4)
                 - labels: np.ndarray of shape (n_samples,) with integer labels 0-9
 
         Raises:
@@ -328,16 +328,18 @@ class MNISTSeq(VisionDataset):
         labels: np.ndarray | torch.Tensor,
         num_samples: int = 16,
         save_path: Path | str | None = None,
+        figsize: tuple[int, int] | None = None,
     ) -> None:
         """Plot samples from a batch by visualizing sequences as drawn digits.
 
         Converts sequences back to images by drawing strokes on a 28x28 canvas.
 
         Args:
-            sequences: Batch of sequences, shape (batch_size, timesteps, 4).
+            sequences: Batch of sequences, shape (batch_size, pad_to, 4).
             labels: Ground truth labels, shape (batch_size,) with integer labels.
             num_samples: Number of samples to plot (default 16 for 4x4 grid).
             save_path: If provided, saves figure to this path. Otherwise, displays it.
+            figsize: Figure size as (width, height). If None, defaults to (12, 12).
 
         Example:
             >>> dataset = MNISTSeq(root="./data", train=True)
@@ -357,7 +359,9 @@ class MNISTSeq(VisionDataset):
 
         # Calculate grid dimensions
         grid_size = int(np.ceil(np.sqrt(num_samples)))
-        fig, axs = plt.subplots(grid_size, grid_size, figsize=(12, 12))
+        if figsize is None:
+            figsize = (12, 12)
+        fig, axs = plt.subplots(grid_size, grid_size, figsize=figsize)
         axs = axs.flatten()
 
         for i in range(num_samples):
@@ -398,6 +402,44 @@ class MNISTSeq(VisionDataset):
         else:
             plt.show()
 
+    def plot_samples(
+        self,
+        num_samples: int = 16,
+        start_idx: int = 0,
+        save_path: Path | str | None = None,
+        figsize: tuple[int, int] | None = None,
+    ) -> None:
+        """Plot samples from this dataset by visualizing sequences as drawn digits.
+
+        This is a convenient instance method that directly uses the dataset's data.
+
+        Args:
+            num_samples: Number of samples to plot (default 16 for 4x4 grid).
+            start_idx: Index to start from (default 0).
+            save_path: If provided, saves figure to this path. Otherwise, displays it.
+            figsize: Figure size as (width, height). If None, defaults to (12, 12).
+
+        Example:
+            >>> dataset = MNISTSeq(root="./data", train=True, download=True)
+            >>> dataset.plot_samples(num_samples=16)  # Plot first 16 samples
+            >>> # Plot 9 samples starting from index 100
+            >>> dataset.plot_samples(num_samples=9, start_idx=100)
+        """
+        # Limit to available data
+        num_samples = min(num_samples, len(self) - start_idx)
+        if num_samples <= 0:
+            logger.warning(f"No samples to plot (start_idx={start_idx}, dataset_size={len(self)})")
+            return
+
+        # Get sequences and labels for the requested samples
+        sequences = self.data[start_idx : start_idx + num_samples]
+        labels = self.labels[start_idx : start_idx + num_samples]
+
+        # Use the static method to do the actual plotting
+        self.plot_batch(
+            sequences, labels, num_samples=num_samples, save_path=save_path, figsize=figsize
+        )
+
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         """Get a single sample from the dataset.
 
@@ -406,7 +448,7 @@ class MNISTSeq(VisionDataset):
 
         Returns:
             Tuple of (data, label) where:
-                - data: Tensor of shape (timesteps, 4) with sequence features
+                - data: Tensor of shape (pad_to, 4) with sequence features
                 - label: Integer tensor with digit label (0-9)
         """
         # Convert to PyTorch tensors
@@ -443,14 +485,14 @@ if __name__ == "__main__":
     data_root = Path(__file__).parent / "data_dir"
 
     train_data = MNISTSeq(root=data_root, train=True, download=True)
-    print(train_data.data.shape)
-    print(train_data.labels.shape)
-    train_data.plot_batch(train_data.data, train_data.labels)
+    print(f"Train data shape: {train_data.data.shape}")
+    print(f"Train labels shape: {train_data.labels.shape}")
+    train_data.plot_samples(num_samples=16)  # Much cleaner!
 
     test_data = MNISTSeq(root=data_root, train=False, download=True)
-    print(test_data.data.shape)
-    print(test_data.labels.shape)
-    test_data.plot_batch(test_data.data, test_data.labels)
+    print(f"Test data shape: {test_data.data.shape}")
+    print(f"Test labels shape: {test_data.labels.shape}")
+    test_data.plot_samples(num_samples=16)  # Much cleaner!
 
     # Keep windows open until user presses Enter
     input("\nPress Enter to close all windows...")
