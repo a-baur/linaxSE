@@ -12,11 +12,7 @@ from jaxtyping import Array, PRNGKeyArray
 
 @dataclass(frozen=True)
 class ChannelMixerConfig(ABC):
-    """Configuration for channel mixers.
-
-    Attributes:
-        None by default. Concrete configs define their own fields.
-    """
+    """Configuration for channel mixers."""
 
     @abstractmethod
     def build(self, in_features: int, out_features: int | None, key: PRNGKeyArray) -> ChannelMixer:
@@ -54,13 +50,14 @@ class ChannelMixer[ConfigType: ChannelMixerConfig](eqx.Module, ABC):
     ):
         """Initialize the channel mixer."""
 
+    # TODO: right now we are not using this lambda. But we should! Also return is_inexact_array.
     def filter_spec_lambda(self) -> Callable[..., bool]:
         """Filter specification for channel mixer parameters.
 
         Returns:
             A lambda function that filters the channel mixer parameters.
         """
-        return lambda _: True
+        return lambda x: eqx.is_inexact_array(x)
 
     @abstractmethod
     def __call__(self, x: Array) -> Array:
