@@ -61,6 +61,12 @@ examples = [
     "tqdm>=4.67.1",
 ]
 
+audio = [
+    "torch>=2.6.0",
+    "torchaudio>=2.6.0",
+    "datasets[audio]>=4.4.1",
+]
+
 cu12 = ["jax[cuda12]>=0.7.2"]
 
 [project.urls]
