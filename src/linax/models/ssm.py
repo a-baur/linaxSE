@@ -227,8 +227,7 @@ class SSM[ConfigType: SSMConfig](eqx.Module):
 
         # Add each block's representation
         for i, block in enumerate(self.blocks):
-            block_repr = repr(block)
-            lines.append(pad_line(f"    [{i}] {block_repr}"))
+            lines.append(pad_line(f"    [{i}] {count_params(block)} params"))
 
         lines.extend(
             [

@@ -34,6 +34,12 @@ classifiers = [
 requires-python = "==3.12.*"
 dependencies = ["equinox>=0.13.2", "jax>=0.7.2", "jaxtyping>=0.3.3"]
 
+[[tool.uv.index]]
+# Optional name for the index.
+name = "pytorch"
+# Required URL for the index.
+url = "https://download.pytorch.org/whl/cpu"
+
 [project.optional-dependencies]
 dev = [
     "pre-commit>=4.3.0",
@@ -55,16 +61,16 @@ docs = [
 examples = [
     "ipykernel>=7.0.1",
     "optax>=0.2.6",
-    "torchvision>=0.24.0",
-    "torch>=2.6.0",
+    "torchvision>=0.23.0",
+    "torch>=2.6.0,<2.9.0",
     "matplotlib>=3.10.0",
     "tqdm>=4.67.1",
 ]
 
 audio = [
-    "torch>=2.6.0",
-    "torchaudio>=2.6.0",
-    "datasets[audio]>=4.4.1",
+    "torch>=2.6.0,<2.9.0",
+    "torchaudio>=2.6.0,<2.9.0",
+    "datasets[audio]>4.0.0",  # newer versions crash on Windows
 ]
 
 cu12 = ["jax[cuda12]>=0.7.2"]
