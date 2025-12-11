@@ -32,11 +32,11 @@ def collate_fn_pad(batch):
         batch (list): List of dictionaries from the Dataset __getitem__.
                       Each item has 'id', 'clean', and 'noisy' keys.
     """
-    clean_tensors = [torch.from_numpy(item['clean']['array']).float() for item in batch]
-    noisy_tensors = [torch.from_numpy(item['noisy']['array']).float() for item in batch]
+    clean_tensors = [torch.from_numpy(item["clean"]["array"]).float() for item in batch]
+    noisy_tensors = [torch.from_numpy(item["noisy"]["array"]).float() for item in batch]
 
-    ids = [item['id'] for item in batch]
-    sampling_rates = [item['clean']['sampling_rate'] for item in batch]
+    ids = [item["id"] for item in batch]
+    sampling_rates = [item["clean"]["sampling_rate"] for item in batch]
 
     clean_padded = pad_sequence(clean_tensors, batch_first=True, padding_value=0.0)
     noisy_padded = pad_sequence(noisy_tensors, batch_first=True, padding_value=0.0)
@@ -46,18 +46,18 @@ def collate_fn_pad(batch):
         mask[i, : src_audio.size(0)] = 1
 
     return {
-        'id': ids,
-        'clean': clean_padded[..., None],  # Add feature dimension
-        'noisy': noisy_padded[..., None],
-        'mask': mask[..., None],
-        'sr': sampling_rates
+        "id": ids,
+        "clean": clean_padded[..., None],  # Add feature dimension
+        "noisy": noisy_padded[..., None],
+        "mask": mask[..., None],
+        "sr": sampling_rates,
     }
+
 
 print("Loading dataset...")
 ds = load_dataset("JacobLinCool/VoiceBank-DEMAND-16k")
 train_dataset, test_dataset = ds["train"], ds["test"]
 
-key = jax.random.PRNGKey(SEED)
 
 train_loader = torch.utils.data.DataLoader(
     train_dataset,
@@ -78,6 +78,7 @@ linoss_cfg = LinOSSConfig(
     encoder_config=LinearEncoderConfig(in_features=1, out_features=64),
     head_config=RegressionHeadConfig(out_features=1, reduce=False),
 )
+key = jax.random.PRNGKey(SEED)
 key, subkey = jax.random.split(key, 2)
 model = linoss_cfg.build(key=subkey)
 state = eqx.nn.State(model=model)
@@ -85,9 +86,9 @@ state = eqx.nn.State(model=model)
 print("Preparing a batch...")
 batch = next(iter(train_loader))
 # Add feature dimension
-clean = batch['clean'].numpy()
-noisy = batch['noisy'].numpy()
-mask = batch['mask'].numpy()
+clean = batch["clean"].numpy()
+noisy = batch["noisy"].numpy()
+mask = batch["mask"].numpy()
 print(" - Clean data shape:", clean.shape)
 print(" - Noisy data shape:", noisy.shape)
 print(" - Mask shape:", mask.shape)
@@ -128,14 +129,13 @@ def loss(
 
 print("Computing initial loss...")
 start_time = time.time()
-loss_value, _ = loss(
-    model,
-    clean,
-    noisy,
-    mask,
-    state,
-    key
-)
+loss_value, _ = loss(model, clean, noisy, mask, state, key)
 end_time = time.time()
 print(f"Loss computation time: {end_time - start_time:.4f} seconds")
 print(f"Initial loss value: {loss_value:.4f}")
+
+
+(loss_value, new_state), grads = eqx.filter_value_and_grad(loss, has_aux=True)(
+    model, clean, noisy, mask, state, key
+)
+print(f"Loss after grad computation: {loss_value:.4f}")
