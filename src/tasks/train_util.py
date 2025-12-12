@@ -37,7 +37,7 @@ class TrainState(eqx.Module):
     opt_state: optax.OptState
     model_state: eqx.nn.State
     key: PRNGKeyArray
-    tx: optax.GradientTransformation = eqx.static_field()
+    tx: optax.GradientTransformation = eqx.field(static=True)
 
     @eqx.filter_jit
     def update(self, x, y, mask):
