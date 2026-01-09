@@ -34,8 +34,6 @@ classifiers = [
 requires-python = "==3.12.*"
 dependencies = ["equinox>=0.13.2", "jax>=0.7.2", "jaxtyping>=0.3.3"]
 
-[[tool.uv.index]]
-
 [project.optional-dependencies]
 dev = [
     "pre-commit>=4.3.0",
