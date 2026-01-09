@@ -22,7 +22,7 @@ def evaluate(ts: TrainState, step: int, test_loader, writer: SummaryWriter):
     for i, sample in enumerate(samples):
         writer.add_audio(
             f"Eval/Sample_{i}",
-            sample.squeeze(),
+            torch.Tensor(sample).squeeze(),
             0,
             sample_rate=16000,
         )
@@ -113,9 +113,9 @@ if __name__ == "__main__":
         batch_size=32,
         num_epochs=20,
         learning_rate=1e-3,
-        log_interval=100,
-        eval_interval=200,
-        save_interval=400,
+        log_interval=10,
+        eval_interval=20,
+        save_interval=40,
         ckpt_dir="checkpoints",
     )
     train(train_cfg)
