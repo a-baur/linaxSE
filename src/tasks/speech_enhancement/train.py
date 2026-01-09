@@ -114,8 +114,8 @@ if __name__ == "__main__":
         num_epochs=20,
         learning_rate=1e-3,
         log_interval=1,
-        eval_interval=100,
-        save_interval=500,
+        eval_interval=200,
+        save_interval=1000,
         ckpt_dir="checkpoints",
     )
     train(train_cfg)
