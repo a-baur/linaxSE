@@ -18,12 +18,12 @@ def evaluate(ts: TrainState, step: int, test_loader, writer: SummaryWriter):
     eval_loss = ts.evaluate(test_loader)
     writer.add_scalar("Eval/Loss", np.mean(eval_loss).item(), step)
 
-    samples, _ = ts.create_samples(test_loader, num_samples=5)
-    for i, sample in enumerate(samples):
+    _, y_pred, _ = ts.create_samples(test_loader, num_samples=5)
+    for i, sample in enumerate(y_pred):
         writer.add_audio(
             f"Eval/Sample_{i}",
-            torch.from_numpy(np.array(sample)).squeeze(),
-            0,
+            torch.from_numpy(np.array(y_pred)).squeeze(),
+            step,
             sample_rate=16000,
         )
 

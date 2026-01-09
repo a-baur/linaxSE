@@ -74,7 +74,7 @@ class TrainState(eqx.Module):
             self,
             test_loader: DataLoader,
             num_samples: int = 5,
-    ) -> tuple[Float[Array, "batch time feature"], eqx.nn.State]:
+    ) -> tuple[Float[Array, "batch time feature"], Float[Array, "batch time feature"], eqx.nn.State]:
         """Generates enhanced samples from the model given noisy input."""
         inference_model = eqx.tree_inference(self.model, value=True)
         batch = next(iter(test_loader))
@@ -85,7 +85,7 @@ class TrainState(eqx.Module):
             in_axes=(0, None, 0),
             out_axes=(0, None),
         )(x, self.model_state, jax.random.split(self.key, x.shape[0]))
-        return pred_y, model_state
+        return x, pred_y, model_state
 
 
 @dataclass
