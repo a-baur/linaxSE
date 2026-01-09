@@ -1,26 +1,8 @@
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from datasets import load_dataset
-from torch.nn.utils.rnn import pad_sequence
 
 __all__ = ["get_vb_demand_dataloaders"]
-
-
-def _pad_to_length(tensor_list, target_length):
-    """
-    Pads a list of 1D tensors to target_length and stacks them.
-    """
-    padded_tensors = []
-    for x in tensor_list:
-        pad_size = target_length - x.shape[-1]
-        if pad_size > 0:
-            x = F.pad(x, (0, pad_size), mode='constant', value=0)
-        else:
-            x = x[:target_length]
-        padded_tensors.append(x)
-
-    return torch.stack(padded_tensors)
 
 
 def _collate_fn_vb_demand(batch) -> dict:
@@ -30,19 +12,24 @@ def _collate_fn_vb_demand(batch) -> dict:
         batch (list): List of dictionaries from the Dataset __getitem__.
                       Each item has 'id', 'clean', and 'noisy' keys.
     """
+    MAX_LEN = 32000
+
     clean_tensors = [torch.from_numpy(item["clean"]["array"]).float() for item in batch]
     noisy_tensors = [torch.from_numpy(item["noisy"]["array"]).float() for item in batch]
 
     ids = [item["id"] for item in batch]
     sampling_rates = [item["clean"]["sampling_rate"] for item in batch]
 
-    clean_padded = _pad_to_length(clean_tensors, 32000)
-    noisy_padded = _pad_to_length(noisy_tensors, 32000)
-
+    clean_padded = torch.zeros(len(batch), MAX_LEN)
+    noisy_padded = torch.zeros(len(batch), MAX_LEN)
     mask = torch.zeros_like(clean_padded).bool()
-    for i, src_audio in enumerate(clean_tensors):
-        valid_len = min(src_audio.size(0), 32000)
-        mask[i, :valid_len] = 1
+
+    # Pad sequences to fixed length and create mask
+    for i, (c, n) in enumerate(zip(clean_tensors, noisy_tensors)):
+        L = min(c.shape[0], MAX_LEN)
+        mask[i, :L] = 1
+        clean_padded[i, :L] = c[:L]
+        noisy_padded[i, :L] = n[:L]
 
     return {
         "id": ids,
