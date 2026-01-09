@@ -1,9 +1,26 @@
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from datasets import load_dataset
 from torch.nn.utils.rnn import pad_sequence
 
 __all__ = ["get_vb_demand_dataloaders"]
+
+
+def _pad_to_length(tensor_list, target_length):
+    """
+    Pads a list of 1D tensors to target_length and stacks them.
+    """
+    padded_tensors = []
+    for x in tensor_list:
+        pad_size = target_length - x.shape[-1]
+        if pad_size > 0:
+            x = F.pad(x, (0, pad_size), mode='constant', value=0)
+        else:
+            x = x[:target_length]
+        padded_tensors.append(x)
+
+    return torch.stack(padded_tensors)
 
 
 def _collate_fn_vb_demand(batch) -> dict:
@@ -19,12 +36,13 @@ def _collate_fn_vb_demand(batch) -> dict:
     ids = [item["id"] for item in batch]
     sampling_rates = [item["clean"]["sampling_rate"] for item in batch]
 
-    clean_padded = pad_sequence(clean_tensors, batch_first=True, padding_value=0.0)
-    noisy_padded = pad_sequence(noisy_tensors, batch_first=True, padding_value=0.0)
+    clean_padded = _pad_to_length(clean_tensors, 32000)
+    noisy_padded = _pad_to_length(noisy_tensors, 32000)
 
     mask = torch.zeros_like(clean_padded).bool()
     for i, src_audio in enumerate(clean_tensors):
-        mask[i, : src_audio.size(0)] = 1
+        valid_len = min(src_audio.size(0), 32000)
+        mask[i, :valid_len] = 1
 
     return {
         "id": ids,
