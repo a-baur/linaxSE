@@ -58,7 +58,7 @@ class TrainState(eqx.Module):
             tx=self.tx,
         ), loss_val
 
-    def evaluate(self, test_loader: DataLoader):
+    def evaluate(self, test_loader: DataLoader) -> float:
         """Evaluates the model on the test dataset."""
         inference_model = eqx.tree_inference(self.model, value=True)
         avg_loss = 0
@@ -68,6 +68,24 @@ class TrainState(eqx.Module):
             mask = item["mask"].numpy()
             avg_loss += mse_loss(inference_model, x, y, mask, self.model_state, self.key)[0]
         return avg_loss / len(test_loader)
+
+    @eqx.filter_jit
+    def create_samples(
+            self,
+            test_loader: DataLoader,
+            num_samples: int = 5,
+    ) -> tuple[Float[Array, "batch time feature"], eqx.nn.State]:
+        """Generates enhanced samples from the model given noisy input."""
+        inference_model = eqx.tree_inference(self.model, value=True)
+        batch = next(iter(test_loader))
+        x = batch["noisy"].numpy()[:num_samples]
+        pred_y, model_state = jax.vmap(
+            inference_model,
+            axis_name="batch",
+            in_axes=(0, None, 0),
+            out_axes=(0, None),
+        )(x, self.model_state, jax.random.split(self.key, x.shape[0]))
+        return pred_y, model_state
 
 
 @dataclass
@@ -81,6 +99,7 @@ class TrainConfig:
     eval_interval: int = 200
     save_interval: int = 1000
     ckpt_dir: str = "checkpoints"
+    log_dir: str = "logs"
 
     def __post_init__(self):
         os.makedirs(self.ckpt_dir, exist_ok=True)

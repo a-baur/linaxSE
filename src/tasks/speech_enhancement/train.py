@@ -3,13 +3,39 @@ import jax
 import optax
 from tqdm import tqdm
 
+from torch.utils.tensorboard import SummaryWriter
+
 from tasks.dataloader import get_vb_demand_dataloaders
 from tasks.model import build_linoss_model
 from tasks.train_util import TrainState, TrainConfig
 
 
+def evaluate(ts: TrainState, step: int, test_loader, writer: SummaryWriter):
+    """Evaluates the model on the test dataset."""
+    eval_loss = ts.evaluate(test_loader)
+    writer.add_scalar("Eval/Loss", eval_loss, step)
+
+    samples, _ = ts.create_samples(test_loader, num_samples=5)
+    for i, sample in enumerate(samples):
+        writer.add_audio(
+            f"Eval/Sample_{i}",
+            sample.squeeze(),
+            0,
+            sample_rate=16000,
+        )
+
+
+def save_checkpoint(model: eqx.Module, step: int, ckpt_dir: str):
+    """Saves the model checkpoint."""
+    ckpt_path = f"{ckpt_dir}/ckpt_step_{step}.eqx"
+    eqx.tree_serialise_leaves(ckpt_path, model)
+    print(f"Saved checkpoint at step {step} to {ckpt_path}")
+
+
 def train(train_cfg: TrainConfig):
     """Trains the model on the training dataset."""
+    writer = SummaryWriter()
+
     train_loader, test_loader = get_vb_demand_dataloaders(batch_size=train_cfg.batch_size)
 
     key = jax.random.PRNGKey(0)
@@ -32,33 +58,34 @@ def train(train_cfg: TrainConfig):
         tx=optimizer,
     )
 
-    num_steps = 0
+    total_steps = train_cfg.num_epochs * len(train_loader)
+    global_step = 0
     for epoch in range(train_cfg.num_epochs):
         with tqdm(
             enumerate(train_loader),
             desc=f"Epoch {epoch}/{train_cfg.num_epochs}",
             total=len(train_loader)
         ) as pbar:
-            for step, item in pbar:
+            for _, item in pbar:
+                item: dict
+
                 x = item["noisy"].numpy()
                 y = item["clean"].numpy()
                 mask = item["mask"].numpy()
                 ts, loss_value = ts.update(x, y, mask)
 
-                is_last_step = step == num_steps - 1
-                if step % train_cfg.log_interval == 0 or is_last_step:
+                is_last_step = global_step == total_steps - 1
+                if global_step % train_cfg.log_interval == 0 or is_last_step:
                     pbar.set_postfix({"loss": f"{loss_value:.4f}"})
+                    writer.add_scalar("Train/Loss", loss_value, global_step)
 
-                if (step % train_cfg.eval_interval == 0 and step > 0) or is_last_step:
-                    eval_loss = ts.evaluate(test_loader)
-                    print(f"\nEvaluation loss at step {step}: {eval_loss:.4f}")
+                if (global_step % train_cfg.eval_interval == 0 and global_step > 0) or is_last_step:
+                    evaluate(ts, global_step, test_loader, writer)
 
-                if (step % train_cfg.save_interval == 0 and step > 0) or is_last_step:
-                    ckpt_path = f"{train_cfg.ckpt_dir}/ckpt_step_{step}.eqx"
-                    eqx.tree_serialise_leaves(ckpt_path, ts.model)
-                    print(f"\nSaved checkpoint at step {step} to {ckpt_path}")
+                if (global_step % train_cfg.save_interval == 0 and global_step > 0) or is_last_step:
+                    save_checkpoint(ts.model, global_step, train_cfg.ckpt_dir)
 
-                num_steps += 1
+                global_step += 1
 
     print("Training complete.")
     return ts.model, ts.model_state
