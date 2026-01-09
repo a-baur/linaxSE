@@ -35,10 +35,6 @@ requires-python = "==3.12.*"
 dependencies = ["equinox>=0.13.2", "jax>=0.7.2", "jaxtyping>=0.3.3"]
 
 [[tool.uv.index]]
-# Optional name for the index.
-name = "pytorch"
-# Required URL for the index.
-url = "https://download.pytorch.org/whl/cpu"
 
 [project.optional-dependencies]
 dev = [
