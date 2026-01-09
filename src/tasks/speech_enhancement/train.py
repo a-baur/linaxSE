@@ -22,7 +22,7 @@ def evaluate(ts: TrainState, step: int, test_loader, writer: SummaryWriter):
     for i, sample in enumerate(y_pred):
         writer.add_audio(
             f"Eval/Sample_{i}",
-            torch.from_numpy(np.array(y_pred)).squeeze(),
+            torch.from_numpy(np.array(sample)).squeeze(),
             step,
             sample_rate=16000,
         )
