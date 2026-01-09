@@ -29,7 +29,7 @@ def save_checkpoint(model: eqx.Module, step: int, ckpt_dir: str):
     """Saves the model checkpoint."""
     ckpt_path = f"{ckpt_dir}/ckpt_step_{step}.eqx"
     eqx.tree_serialise_leaves(ckpt_path, model)
-    print(f"Saved checkpoint at step {step} to {ckpt_path}")
+    print(f"\nSaved checkpoint at step {step} to {ckpt_path}")
 
 
 def train(train_cfg: TrainConfig):
@@ -95,12 +95,12 @@ if __name__ == "__main__":
     train_cfg = TrainConfig(
         num_blocks=2,
         hidden_size=16,
-        batch_size=4,
-        num_epochs=1,
+        batch_size=32,
+        num_epochs=20,
         learning_rate=1e-3,
-        log_interval=1,
-        eval_interval=5,
-        save_interval=5,
+        log_interval=100,
+        eval_interval=200,
+        save_interval=400,
         ckpt_dir="checkpoints",
     )
     train(train_cfg)
