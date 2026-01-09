@@ -1,5 +1,6 @@
 import equinox as eqx
 import jax
+import numpy as np
 import optax
 import torch
 from tqdm import tqdm
@@ -15,7 +16,7 @@ from tasks.train_util import TrainState, TrainConfig
 def evaluate(ts: TrainState, step: int, test_loader, writer: SummaryWriter):
     """Evaluates the model on the test dataset."""
     eval_loss = ts.evaluate(test_loader)
-    writer.add_scalar("Eval/Loss", eval_loss, step)
+    writer.add_scalar("Eval/Loss", np.mean(eval_loss).item(), step)
 
     samples, _ = ts.create_samples(test_loader, num_samples=5)
     for i, sample in enumerate(samples):
@@ -79,7 +80,7 @@ def train(train_cfg: TrainConfig):
                 is_last_step = global_step == total_steps - 1
                 if global_step % train_cfg.log_interval == 0 or is_last_step:
                     pbar.set_postfix({"loss": f"{loss_value:.4f}"})
-                    writer.add_scalar("Train/Loss", loss_value, global_step)
+                    writer.add_scalar("Train/Loss", np.mean(loss_value).item(), global_step)
 
                 if (global_step % train_cfg.eval_interval == 0 and global_step > 0) or is_last_step:
                     evaluate(ts, global_step, test_loader, writer)
