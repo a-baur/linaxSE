@@ -75,7 +75,6 @@ def train(train_cfg: TrainConfig):
                 x = item["noisy"].numpy()
                 y = item["clean"].numpy()
                 mask = item["mask"].numpy()
-                print(x.shape, y.shape, mask.shape)
                 ts, loss_value = ts.update(x, y, mask)
 
                 is_last_step = global_step == total_steps - 1
