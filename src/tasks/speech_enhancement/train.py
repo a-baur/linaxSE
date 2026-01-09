@@ -1,10 +1,12 @@
 import equinox as eqx
 import jax
 import optax
+import torch
 from tqdm import tqdm
 
 from torch.utils.tensorboard import SummaryWriter
 
+from tasks import util
 from tasks.dataloader import get_vb_demand_dataloaders
 from tasks.model import build_linoss_model
 from tasks.train_util import TrainState, TrainConfig
@@ -92,6 +94,18 @@ def train(train_cfg: TrainConfig):
 
 
 if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    n_gpus = torch.cuda.device_count()
+
+    if n_gpus > 0:
+        devices = util.get_cuda_devices()
+        devices = "\n".join(devices)
+        proceed = input(
+            f"proceed training on the following cuda devices (y/n)?\n{devices}\n"
+        )
+        if proceed.lower() == "n":
+            raise KeyboardInterrupt
+
     train_cfg = TrainConfig(
         num_blocks=2,
         hidden_size=16,
