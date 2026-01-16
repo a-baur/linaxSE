@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 import equinox as eqx
 import jax
+import numpy as np
 import optax
 from pesq import pesq
 from jax import numpy as jnp
@@ -66,7 +67,7 @@ def pesq_loss(
     pred_y: Float[Array, "batch time feature"],
     mask: Int[Array, "batch time feature"],
 ) -> Float[Array, ""]:
-    return pesq(16000, y * mask, pred_y * mask, "wb")
+    return pesq(16000, np.array(y * mask), np.array(pred_y * mask), "wb")
 
 
 @dataclass
