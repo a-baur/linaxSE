@@ -110,7 +110,7 @@ class TrainState(eqx.Module):
             x = item["noisy"].numpy()
             y = item["clean"].numpy()
             mask = item["mask"].numpy()
-            pred_y, model_state = inference_model(x, y, mask)
+            pred_y, model_state = infer(inference_model, x, self.model_state, self.key)
             cum_mse += mse_loss(y, pred_y, mask)
             cum_pesq += pesq_loss(y, pred_y, mask)
         return EvalMetric(
