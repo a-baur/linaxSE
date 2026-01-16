@@ -67,7 +67,13 @@ def pesq_loss(
     pred_y: Float[Array, "batch time feature"],
     mask: Int[Array, "batch time feature"],
 ) -> Float[Array, ""]:
-    return pesq(16000, np.array(y * mask), np.array(pred_y * mask), "wb")
+    loss = 0
+    for i in range(y.shape[0]):
+        end_idx = jnp.sum(mask[i, :, 0])
+        y[i] = y[i][: end_idx]
+        pred_y[i] = pred_y[i][: end_idx]
+        loss += pesq(16000, np.array(y[i]), np.array(pred_y[i]), "wb")
+    return loss / y.shape[0]
 
 
 @dataclass
