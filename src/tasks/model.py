@@ -16,9 +16,9 @@ class NormalizedLinOSS(eqx.Module):
     def __init__(self, backbone_model):
         self.backbone = backbone_model
 
-    def __call__(self, x, key=None):
+    def __call__(self, x, state, key=None):
         logits = self.backbone(x)
-        return jax.nn.tanh(logits)
+        return jax.nn.tanh(logits), state
 
 
 def build_linoss_model(
