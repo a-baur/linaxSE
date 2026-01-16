@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import equinox as eqx
 import jax
 import optax
+from pesq import pesq
 from jax import numpy as jnp
 from jaxtyping import Float, Array, Int, PRNGKeyArray
 from torch.utils.data import DataLoader
@@ -13,11 +14,30 @@ from linax.models import SSM
 
 
 @eqx.filter_jit
-def mse_loss(
+def train_loss(
     model: SSM,
     x: Float[Array, "batch time feature"],
     y: Float[Array, "batch time feature"],
     mask: Int[Array, "batch time feature"],
+    state: eqx.nn.State,
+    key: PRNGKeyArray,
+) -> tuple[Float[Array, ""], eqx.nn.State]:
+    """ Infer and compute MSE loss in single function call for training efficiency. """
+    batch_keys = jax.random.split(key, x.shape[0])
+    pred_y, model_state = jax.vmap(
+        model,
+        axis_name="batch",
+        in_axes=(0, None, 0),
+        out_axes=(0, None),
+    )(x, state, batch_keys)
+    mse = jnp.sum(((pred_y - y) ** 2) * mask) / jnp.sum(mask)
+    return mse, model_state
+
+
+@eqx.filter_jit
+def infer(
+    model: SSM,
+    x: Float[Array, "batch time feature"],
     state: eqx.nn.State,
     key: PRNGKeyArray,
 ) -> tuple[Float[Array, ""], eqx.nn.State]:
@@ -28,8 +48,31 @@ def mse_loss(
         in_axes=(0, None, 0),
         out_axes=(0, None),
     )(x, state, batch_keys)
+    return pred_y, model_state
+
+
+@eqx.filter_jit
+def mse_loss(
+    y: Float[Array, "batch time feature"],
+    pred_y: Float[Array, "batch time feature"],
+    mask: Int[Array, "batch time feature"],
+) -> float:
     mse = jnp.sum(((pred_y - y) ** 2) * mask) / jnp.sum(mask)
-    return mse, model_state
+    return mse.item()
+
+
+def pesq_loss(
+    y: Float[Array, "batch time feature"],
+    pred_y: Float[Array, "batch time feature"],
+    mask: Int[Array, "batch time feature"],
+) -> Float[Array, ""]:
+    return pesq(16000, y * mask, pred_y * mask, "wb")
+
+
+@dataclass
+class EvalMetric:
+    mse: float
+    pesq: float
 
 
 class TrainState(eqx.Module):
@@ -42,7 +85,7 @@ class TrainState(eqx.Module):
     @eqx.filter_jit
     def update(self, x, y, mask):
         key, train_key = jax.random.split(self.key)  # update key for next step
-        (loss_val, new_model_state), grads = eqx.filter_value_and_grad(mse_loss, has_aux=True)(
+        (loss_val, new_model_state), grads = eqx.filter_value_and_grad(train_loss, has_aux=True)(
             self.model, x, y, mask, self.model_state, train_key
         )
         updates, new_opt_state = self.tx.update(
@@ -58,16 +101,22 @@ class TrainState(eqx.Module):
             tx=self.tx,
         ), loss_val
 
-    def evaluate(self, test_loader: DataLoader) -> float:
+    def evaluate(self, test_loader: DataLoader) -> EvalMetric:
         """Evaluates the model on the test dataset."""
         inference_model = eqx.tree_inference(self.model, value=True)
-        avg_loss = 0
+        cum_mse = 0
+        cum_pesq = 0
         for item in tqdm(test_loader, desc="Evaluating"):
             x = item["noisy"].numpy()
             y = item["clean"].numpy()
             mask = item["mask"].numpy()
-            avg_loss += mse_loss(inference_model, x, y, mask, self.model_state, self.key)[0]
-        return avg_loss / len(test_loader)
+            pred_y, model_state = inference_model(x, y, mask)
+            cum_mse += mse_loss(y, pred_y, mask)
+            cum_pesq += pesq_loss(y, pred_y, mask)
+        return EvalMetric(
+            mse=cum_mse / len(test_loader),
+            pesq=cum_pesq / len(test_loader),
+        )
 
     @eqx.filter_jit
     def create_samples(

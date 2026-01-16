@@ -15,8 +15,10 @@ from tasks.train_util import TrainState, TrainConfig
 
 def evaluate(ts: TrainState, step: int, test_loader, writer: SummaryWriter):
     """Evaluates the model on the test dataset."""
-    eval_loss = ts.evaluate(test_loader)
-    writer.add_scalar("Eval/Loss", np.mean(eval_loss).item(), step)
+    eval_metrics = ts.evaluate(test_loader)
+
+    writer.add_scalar("Eval/MSE", eval_metrics.mse, step)
+    writer.add_scalar("Eval/PESQ", eval_metrics.pesq, step)
 
     x, y_pred, _ = ts.create_samples(test_loader, num_samples=5)
     if step == 0:
