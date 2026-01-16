@@ -87,6 +87,7 @@ def train(train_cfg: TrainConfig):
         num_blocks=train_cfg.num_blocks,
         hidden_size=train_cfg.hidden_size,
         subkey=subkey,
+        normalized=True,  # apply tanh normalization for audio regression task
     )
 
     optimizer = optax.adam(train_cfg.learning_rate)
