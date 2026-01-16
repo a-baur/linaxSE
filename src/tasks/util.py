@@ -1,5 +1,10 @@
 import os
+
+import numpy as np
 import torch
+from torch.utils.tensorboard import SummaryWriter
+
+import matplotlib.pyplot as plt
 
 
 def get_cuda_devices() -> list[str]:
@@ -22,3 +27,31 @@ def get_cuda_devices() -> list[str]:
         device_info.append(info)
 
     return device_info
+
+
+def log_spectrogram(
+        writer: SummaryWriter,
+        tag: str,
+        waveform: np.ndarray,
+        step: int,
+        sample_rate=16000,
+):
+    """Computes and logs a spectrogram figure to TensorBoard."""
+    fig, ax = plt.subplots(figsize=(10, 4))
+
+    Pxx, freqs, bins, im = ax.specgram(
+        waveform,
+        NFFT=1024,
+        Fs=sample_rate,
+        noverlap=512,
+        cmap='viridis'
+    )
+
+    ax.set_title(tag)
+    ax.set_ylabel("Frequency (Hz)")
+    ax.set_xlabel("Time (s)")
+    fig.colorbar(im).set_label('Intensity (dB)')
+
+    writer.add_figure(tag, fig, global_step=step)
+
+    plt.close(fig)

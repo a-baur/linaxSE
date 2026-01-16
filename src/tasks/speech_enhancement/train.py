@@ -18,11 +18,34 @@ def evaluate(ts: TrainState, step: int, test_loader, writer: SummaryWriter):
     eval_loss = ts.evaluate(test_loader)
     writer.add_scalar("Eval/Loss", np.mean(eval_loss).item(), step)
 
-    _, y_pred, _ = ts.create_samples(test_loader, num_samples=5)
+    x, y_pred, _ = ts.create_samples(test_loader, num_samples=5)
+    if step == 0:
+        for i, sample in enumerate(x):
+            writer.add_audio(
+                f"Source/Sample_{i}",
+                torch.from_numpy(np.array(sample)).squeeze(),
+                step,
+                sample_rate=16000,
+            )
+            util.log_spectrogram(
+                writer,
+                f"Source/Spectrogram_Sample_{i}",
+                sample.squeeze(),
+                step,
+                sample_rate=16000,
+            )
+
     for i, sample in enumerate(y_pred):
         writer.add_audio(
             f"Eval/Sample_{i}",
             torch.from_numpy(np.array(sample)).squeeze(),
+            step,
+            sample_rate=16000,
+        )
+        util.log_spectrogram(
+            writer,
+            f"Eval/Spectrogram_Sample_{i}",
+            sample.squeeze(),
             step,
             sample_rate=16000,
         )
@@ -82,7 +105,7 @@ def train(train_cfg: TrainConfig):
                     pbar.set_postfix({"loss": f"{loss_value:.4f}"})
                     writer.add_scalar("Train/Loss", np.mean(loss_value).item(), global_step)
 
-                if (global_step % train_cfg.eval_interval == 0 and global_step > 0) or is_last_step:
+                if global_step % train_cfg.eval_interval == 0 or is_last_step:
                     evaluate(ts, global_step, test_loader, writer)
 
                 if (global_step % train_cfg.save_interval == 0 and global_step > 0) or is_last_step:
