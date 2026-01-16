@@ -148,11 +148,11 @@ if __name__ == "__main__":
             raise KeyboardInterrupt
 
     train_cfg = TrainConfig(
-        num_blocks=2,
-        hidden_size=16,
+        num_blocks=4,
+        hidden_size=64,
         batch_size=32,
         num_epochs=20,
-        learning_rate=1e-3,
+        learning_rate=1e-5,
         log_interval=1,
         eval_interval=500,
         save_interval=1000,
