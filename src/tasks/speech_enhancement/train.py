@@ -20,19 +20,32 @@ def evaluate(ts: TrainState, step: int, test_loader, writer: SummaryWriter):
     writer.add_scalar("Eval/MSE", eval_metrics.mse, step)
     writer.add_scalar("Eval/PESQ", eval_metrics.pesq, step)
 
-    x, y_pred, _ = ts.create_samples(test_loader, num_samples=5)
+    x, y, y_pred, _ = ts.create_samples(test_loader, num_samples=5)
     if step == 0:
         for i, sample in enumerate(x):
             writer.add_audio(
                 f"Source/Sample_{i}",
-                torch.from_numpy(np.array(sample)).squeeze(),
+                torch.from_numpy(np.array(x)).squeeze(),
                 step,
                 sample_rate=16000,
             )
             util.log_spectrogram(
                 writer,
                 f"Source/Spectrogram_Sample_{i}",
-                sample.squeeze(),
+                np.array(x).squeeze(),
+                step,
+                sample_rate=16000,
+            )
+            writer.add_audio(
+                f"Target/Sample_{i}",
+                torch.from_numpy(np.array(y)).squeeze(),
+                step,
+                sample_rate=16000,
+            )
+            util.log_spectrogram(
+                writer,
+                f"Target/Spectrogram_Sample_{i}",
+                np.array(y).squeeze(),
                 step,
                 sample_rate=16000,
             )
@@ -139,7 +152,7 @@ if __name__ == "__main__":
         num_epochs=20,
         learning_rate=1e-3,
         log_interval=1,
-        eval_interval=200,
+        eval_interval=500,
         save_interval=1000,
         ckpt_dir="checkpoints",
     )
