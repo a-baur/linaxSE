@@ -70,9 +70,12 @@ def pesq_loss(
     loss = 0
     for i in range(y.shape[0]):
         end_idx = jnp.sum(mask[i, :, 0])
-        y[i] = y[i][: end_idx]
-        pred_y[i] = pred_y[i][: end_idx]
-        loss += pesq(16000, np.array(y[i]), np.array(pred_y[i]), "wb")
+        loss += pesq(
+            fs=16000,
+            ref=np.array(y[i][: end_idx]),
+            deg=np.array(pred_y[i][: end_idx]),
+            mode="wb"  # wideband
+        )
     return loss / y.shape[0]
 
 
