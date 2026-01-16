@@ -58,7 +58,7 @@ def mse_loss(
     mask: Int[Array, "batch time feature"],
 ) -> float:
     mse = jnp.sum(((pred_y - y) ** 2) * mask) / jnp.sum(mask)
-    return mse.item()
+    return mse
 
 
 def pesq_loss(
@@ -106,12 +106,12 @@ class TrainState(eqx.Module):
         inference_model = eqx.tree_inference(self.model, value=True)
         cum_mse = 0
         cum_pesq = 0
-        for item in tqdm(test_loader, desc="Evaluating"):
+        for item in tqdm(test_loader, desc="Evaluating", leave=False):
             x = item["noisy"].numpy()
             y = item["clean"].numpy()
             mask = item["mask"].numpy()
             pred_y, model_state = infer(inference_model, x, self.model_state, self.key)
-            cum_mse += mse_loss(y, pred_y, mask)
+            cum_mse += mse_loss(y, pred_y, mask).item()
             cum_pesq += pesq_loss(y, pred_y, mask)
         return EvalMetric(
             mse=cum_mse / len(test_loader),
