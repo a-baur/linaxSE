@@ -65,7 +65,8 @@ examples = [
 audio = [
     "torch>=2.6.0,<2.9.0",
     "torchaudio>=2.6.0,<2.9.0",
-    "datasets[audio]>4.0.0",  # newer versions crash on Windows
+    "torchcodec<=0.7",
+    "datasets[audio]>4.0.0",
 ]
 
 cu12 = ["jax[cuda12]>=0.7.2"]
