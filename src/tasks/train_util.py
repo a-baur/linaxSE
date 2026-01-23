@@ -15,27 +15,6 @@ from linax.models import SSM
 
 
 @eqx.filter_jit
-def train_loss(
-    model: SSM,
-    x: Float[Array, "batch time feature"],
-    y: Float[Array, "batch time feature"],
-    mask: Int[Array, "batch time feature"],
-    state: eqx.nn.State,
-    key: PRNGKeyArray,
-) -> tuple[Float[Array, ""], eqx.nn.State]:
-    """ Infer and compute MSE loss in single function call for training efficiency. """
-    batch_keys = jax.random.split(key, x.shape[0])
-    pred_y, model_state = jax.vmap(
-        model,
-        axis_name="batch",
-        in_axes=(0, None, 0),
-        out_axes=(0, None),
-    )(x, state, batch_keys)
-    mse = jnp.sum(((pred_y - y) ** 2) * mask) / jnp.sum(mask)
-    return mse, model_state
-
-
-@eqx.filter_jit
 def infer(
     model: SSM,
     x: Float[Array, "batch time feature"],
@@ -57,9 +36,42 @@ def mse_loss(
     y: Float[Array, "batch time feature"],
     pred_y: Float[Array, "batch time feature"],
     mask: Int[Array, "batch time feature"],
-) -> float:
+) -> Float[Array, ""]:
     mse = jnp.sum(((pred_y - y) ** 2) * mask) / jnp.sum(mask)
     return mse
+
+
+@eqx.filter_jit
+def si_sdr_loss(
+    y: Float[Array, "batch time feature"],
+    pred_y: Float[Array, "batch time feature"],
+    mask: Int[Array, "batch time feature"],
+) -> Float[Array, ""]:
+    """
+    Computes Negative SI-SDR loss for a batch.
+
+    Args:
+        pred_y: (Batch, Time, 1) Estimated audio
+        y: (Batch, Time, 1) Clean target audio
+        mask: (Batch, Time, 1) Binary mask for valid lengths
+    """
+    pred_y = pred_y.squeeze(-1) * mask.squeeze(-1)
+    y = y.squeeze(-1) * mask.squeeze(-1)
+
+    eps = jax.numpy.finfo(pred_y.dtype).eps
+
+    alpha = (
+        jnp.sum(pred_y * y, axis=-1, keepdims=True) + eps
+        / jnp.sum(y ** 2, axis=-1, keepdims=True) + eps
+    )
+    target_scaled = alpha * y
+
+    noise = target_scaled - pred_y
+
+    target_pow = jnp.sum(target_scaled ** 2, axis=1) + eps
+    noise_pow = jnp.sum(noise ** 2, axis=1) + eps
+
+    return -10.0 * jnp.log10(target_pow / noise_pow)
 
 
 def pesq_loss(
@@ -74,6 +86,22 @@ def pesq_loss(
         deg = np.array(pred_y[i][: end_idx]).squeeze()
         loss += pesq(fs=16000, ref=ref, deg=deg, mode="wb")
     return loss / y.shape[0]
+
+
+@eqx.filter_jit
+def train_loss(
+    model: SSM,
+    x: Float[Array, "batch time feature"],
+    y: Float[Array, "batch time feature"],
+    mask: Int[Array, "batch time feature"],
+    state: eqx.nn.State,
+    key: PRNGKeyArray,
+) -> tuple[Float[Array, ""], eqx.nn.State]:
+    """ Infer and compute MSE loss in single function call for training efficiency. """
+    pred_y, model_state = infer(model, x, state, key)
+    mse = si_sdr_loss(y, pred_y, mask)
+    return mse, model_state
+
 
 
 @dataclass
