@@ -61,8 +61,8 @@ def si_sdr_loss(
     eps = jax.numpy.finfo(pred_y.dtype).eps
 
     alpha = (
-        jnp.sum(pred_y * y, axis=-1, keepdims=True) + eps
-        / jnp.sum(y ** 2, axis=-1, keepdims=True) + eps
+        (jnp.sum(pred_y * y, axis=-1, keepdims=True) + eps)
+        / (jnp.sum(y ** 2, axis=-1, keepdims=True) + eps)
     )
     target_scaled = alpha * y
 
@@ -70,8 +70,9 @@ def si_sdr_loss(
 
     target_pow = jnp.sum(target_scaled ** 2, axis=1) + eps
     noise_pow = jnp.sum(noise ** 2, axis=1) + eps
+    si_sdr = 10.0 * jnp.log10(target_pow / noise_pow)
 
-    return -10.0 * jnp.log10(target_pow / noise_pow)
+    return -jnp.mean(si_sdr)
 
 
 def pesq_loss(
