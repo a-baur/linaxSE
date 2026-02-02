@@ -17,7 +17,7 @@ def evaluate(ts: TrainState, step: int, test_loader, writer: SummaryWriter):
     """Evaluates the model on the test dataset."""
     eval_metrics = ts.evaluate(test_loader)
 
-    writer.add_scalar("Eval/MSE", eval_metrics.mse, step)
+    writer.add_scalar("Eval/Loss", eval_metrics.mse, step)
     writer.add_scalar("Eval/PESQ", eval_metrics.pesq, step)
 
     num_samples = 5

@@ -46,6 +46,7 @@ def si_sdr_loss(
     y: Float[Array, "batch time feature"],
     pred_y: Float[Array, "batch time feature"],
     mask: Int[Array, "batch time feature"],
+    zero_mean: bool = True,
 ) -> Float[Array, ""]:
     """
     Computes Negative SI-SDR loss for a batch.
@@ -54,9 +55,17 @@ def si_sdr_loss(
         pred_y: (Batch, Time, 1) Estimated audio
         y: (Batch, Time, 1) Clean target audio
         mask: (Batch, Time, 1) Binary mask for valid lengths
+        zero_mean: Whether to zero-mean the signals before computation
+
+    Returns:
+        Negative SI-SDR loss
     """
     pred_y = pred_y.squeeze(-1) * mask.squeeze(-1)
     y = y.squeeze(-1) * mask.squeeze(-1)
+
+    if zero_mean:
+        pred_y = pred_y - jnp.mean(pred_y, axis=-1, keepdims=True)
+        y = y - jnp.mean(y, axis=-1, keepdims=True)
 
     eps = jax.numpy.finfo(pred_y.dtype).eps
 
@@ -100,8 +109,8 @@ def train_loss(
 ) -> tuple[Float[Array, ""], eqx.nn.State]:
     """ Infer and compute MSE loss in single function call for training efficiency. """
     pred_y, model_state = infer(model, x, state, key)
-    mse = si_sdr_loss(y, pred_y, mask)
-    return mse, model_state
+    loss = si_sdr_loss(y, pred_y, mask, zero_mean=True)
+    return loss, model_state
 
 
 
