@@ -113,11 +113,11 @@ def train_loss(
     return loss, model_state
 
 
-
 @dataclass
 class EvalMetric:
     mse: float
     pesq: float
+    si_sdr: float
 
 
 class TrainState(eqx.Module):
@@ -151,6 +151,7 @@ class TrainState(eqx.Module):
         inference_model = eqx.tree_inference(self.model, value=True)
         cum_mse = 0
         cum_pesq = 0
+        cum_sisdr = 0
         for item in tqdm(test_loader, desc="Evaluating", leave=False):
             x = item["noisy"].numpy()
             y = item["clean"].numpy()
@@ -158,9 +159,11 @@ class TrainState(eqx.Module):
             pred_y, model_state = infer(inference_model, x, self.model_state, self.key)
             cum_mse += mse_loss(y, pred_y, mask).item()
             cum_pesq += pesq_loss(y, pred_y, mask)
+            cum_sisdr += si_sdr_loss(y, pred_y, mask, zero_mean=True).item()
         return EvalMetric(
             mse=cum_mse / len(test_loader),
             pesq=cum_pesq / len(test_loader),
+            si_sdr=cum_sisdr / len(test_loader),
         )
 
     @eqx.filter_jit
