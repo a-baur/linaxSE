@@ -152,7 +152,7 @@ if __name__ == "__main__":
         num_blocks=4,
         hidden_size=64,
         batch_size=32,
-        num_epochs=20,
+        num_epochs=200,
         learning_rate=1e-5,
         log_interval=1,
         eval_interval=500,
