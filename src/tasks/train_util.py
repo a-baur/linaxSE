@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from linax.models import SSM
+from tasks import util
 
 
 @eqx.filter_jit
@@ -193,8 +194,6 @@ class TrainState(eqx.Module):
 
 @dataclass
 class TrainConfig:
-    num_blocks: int = 4
-    hidden_size: int = 64
     batch_size: int = 16
     num_epochs: int = 1
     learning_rate: float = 1e-3
@@ -206,3 +205,78 @@ class TrainConfig:
 
     def __post_init__(self):
         os.makedirs(self.ckpt_dir, exist_ok=True)
+
+
+def evaluate(ts: TrainState, step: int, test_loader, writer: SummaryWriter):
+    """Evaluates the model on the test dataset."""
+    eval_metrics = ts.evaluate(test_loader)
+
+    writer.add_scalar("Eval/MSE", eval_metrics.mse, step)
+    writer.add_scalar("Eval/PESQ", eval_metrics.pesq, step)
+    writer.add_scalar("Eval/SI_SDR", eval_metrics.si_sdr, step)
+
+    num_samples = 5
+    x, y, y_pred, _ = ts.create_samples(test_loader, num_samples=num_samples)
+    if step == 0:
+        for i in range(num_samples):
+            writer.add_audio(
+                f"Source/Sample_{i}",
+                torch.from_numpy(np.array(x[i])).squeeze(),
+                step,
+                sample_rate=16000,
+            )
+            util.log_spectrogram(
+                writer,
+                f"Source/Spectrogram_Sample_{i}",
+                np.array(x[i]).squeeze(),
+                step,
+                sample_rate=16000,
+            )
+            writer.add_audio(
+                f"Target/Sample_{i}",
+                torch.from_numpy(np.array(y[i])).squeeze(),
+                step,
+                sample_rate=16000,
+            )
+            util.log_spectrogram(
+                writer,
+                f"Target/Spectrogram_Sample_{i}",
+                np.array(y[i]).squeeze(),
+                step,
+                sample_rate=16000,
+            )
+
+    for i, sample in enumerate(y_pred):
+        writer.add_audio(
+            f"Eval/Sample_{i}",
+            torch.from_numpy(np.array(sample)).squeeze(),
+            step,
+            sample_rate=16000,
+        )
+        util.log_spectrogram(
+            writer,
+            f"Eval/Spectrogram_Sample_{i}",
+            sample.squeeze(),
+            step,
+            sample_rate=16000,
+        )
+
+
+def save_checkpoint(model: eqx.Module, step: int, ckpt_dir: str):
+    """Saves the model checkpoint."""
+    ckpt_path = f"{ckpt_dir}/ckpt_step_{step}.eqx"
+    eqx.tree_serialise_leaves(ckpt_path, model)
+    print(f"\nSaved checkpoint at step {step} to {ckpt_path}")
+
+
+def prompt_device_precheck():
+    n_gpus = torch.cuda.device_count()
+
+    if n_gpus > 0:
+        devices = util.get_cuda_devices()
+        devices = "\n".join(devices)
+        proceed = input(
+            f"proceed training on the following cuda devices (y/n)?\n{devices}\n"
+        )
+        if proceed.lower() == "n":
+            raise KeyboardInterrupt

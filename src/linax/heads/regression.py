@@ -18,7 +18,9 @@ class RegressionHeadConfig(HeadConfig):
 
     Attributes:
         out_features: Output dimensionality (prediction dimension).
+        normalize: Whether to apply normalization (tanh) to the output.
     """
+    normalize: bool = False
 
     def build(self, in_features: int, key: PRNGKeyArray) -> RegressionHead:
         """Build head from config.
@@ -53,6 +55,7 @@ class RegressionHead[ConfigType: RegressionHeadConfig](Head):
 
     linear: eqx.nn.Linear
     reduce: bool
+    normalize: bool
     in_features: int
     out_features: int
 
@@ -61,6 +64,7 @@ class RegressionHead[ConfigType: RegressionHeadConfig](Head):
         self.linear = eqx.nn.Linear(in_features=in_features, out_features=out_features, key=key)
         self.in_features, self.out_features = in_features, out_features
         self.reduce = cfg.reduce
+        self.normalize = cfg.normalize
 
     def __call__(self, x: Array, state: eqx.nn.State) -> tuple[Array, eqx.nn.State]:
         """Forward pass of the regression head.
@@ -83,4 +87,6 @@ class RegressionHead[ConfigType: RegressionHeadConfig](Head):
             x = self.linear(x)  # shape (in_features)) -> (out_features)
         else:
             x = jax.vmap(self.linear)(x)  # shape (timesteps, in_features) -> (timesteps, out_features)
+        if self.normalize:
+            x = jax.nn.tanh(x)
         return x, state
