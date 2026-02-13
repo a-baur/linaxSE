@@ -203,6 +203,7 @@ class TrainConfig:
     log_interval: int = 50
     eval_interval: int = 200
     save_interval: int = 1000
+    num_audio_samples: int = 5
     ckpt_dir: str = "checkpoints"
     log_dir: str = "logs"
 
@@ -210,15 +211,22 @@ class TrainConfig:
         os.makedirs(self.ckpt_dir, exist_ok=True)
 
 
-def evaluate(ts: TrainState, step: int, test_loader, writer: SummaryWriter):
-    """Evaluates the model on the test dataset."""
+def evaluate(ts: TrainState, step: int, test_loader, writer: SummaryWriter, num_samples: int = 5):
+    """Evaluates the model on the test dataset.
+
+    Args:
+        ts: TrainState containing the model and state.
+        step: Current training step.
+        test_loader: DataLoader for the test dataset.
+        writer: SummaryWriter for logging.
+        num_samples: Number of audio samples to log.
+    """
     eval_metrics = ts.evaluate(test_loader)
 
     writer.add_scalar("Eval/MSE", eval_metrics.mse, step)
     writer.add_scalar("Eval/PESQ", eval_metrics.pesq, step)
     writer.add_scalar("Eval/SI_SDR", eval_metrics.si_sdr, step)
 
-    num_samples = 5
     x, y, y_pred, _ = ts.create_samples(test_loader, num_samples=num_samples)
     if step == 0:
         for i in range(num_samples):

@@ -57,7 +57,13 @@ def train(train_cfg: TrainConfig):
                     writer.add_scalar("Train/Loss", np.mean(loss_value).item(), global_step)
 
                 if global_step % train_cfg.eval_interval == 0 or is_last_step:
-                    evaluate(ts, global_step, test_loader, writer)
+                    evaluate(
+                        ts,
+                        step=global_step,
+                        test_loader=test_loader,
+                        writer=writer,
+                        num_samples=train_cfg.num_audio_samples
+                    )
 
                 if (global_step % train_cfg.save_interval == 0 and global_step > 0) or is_last_step:
                     save_checkpoint(ts.model, global_step, train_cfg.ckpt_dir)
@@ -75,6 +81,7 @@ if __name__ == "__main__":
         num_epochs=200,
         learning_rate=1e-5,
         log_interval=1,
+        num_audio_samples=15,
         eval_interval=500,
         save_interval=1000,
         ckpt_dir="checkpoints",
