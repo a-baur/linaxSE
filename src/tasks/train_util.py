@@ -1,6 +1,9 @@
 import os
 from dataclasses import dataclass
 
+import torch
+from torch.utils.tensorboard import SummaryWriter
+
 import equinox as eqx
 import jax
 import numpy as np
