@@ -68,6 +68,6 @@ def build_linoss_spectral(subkey: PRNGKeyArray) -> eqx.Module:
     return SpectralWrapper(
         backbone=cfg.build(key=subkey),
         n_fft=n_fft,
-        hop_length=128,
-        win_length=256,
+        hop_length=320,
+        win_length=1280,
     )
