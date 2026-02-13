@@ -49,7 +49,7 @@ def build_linoss_spectral(subkey: PRNGKeyArray) -> eqx.Module:
         eqx.Module,: The initialized model
     """
     hidden_size = 64
-    n_fft = 1024
+    n_fft = 512
 
     in_features = (n_fft // 2 + 1) * 2  # Real and imaginary parts of the spectrogram
     cfg = LinOSSConfig(
@@ -68,6 +68,6 @@ def build_linoss_spectral(subkey: PRNGKeyArray) -> eqx.Module:
     return SpectralWrapper(
         backbone=cfg.build(key=subkey),
         n_fft=n_fft,
-        hop_length=240,
-        win_length=640,
+        hop_length=256,
+        win_length=512,
     )

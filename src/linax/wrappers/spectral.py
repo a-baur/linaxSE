@@ -81,7 +81,6 @@ class SpectralWrapper(eqx.Module):
         elif x_recon.shape[0] < original_length:
             diff = original_length - x_recon.shape[0]
             x_recon = jnp.pad(x_recon, ((0, diff),))
-
-        x_recon = jnp.expand_dims(x, 1)
+        x_recon = x_recon[:, None]  # reintroduce last dimension
 
         return x_recon, new_state
