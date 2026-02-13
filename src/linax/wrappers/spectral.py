@@ -55,15 +55,17 @@ class SpectralWrapper(eqx.Module):
 
         # [freq, frames] -> [frames, freq]
         Zxx = Zxx.T
+        mag = jnp.abs(Zxx)
+        phase = jnp.angle(Zxx)
 
-        backbone_x = jnp.concatenate([Zxx.real, Zxx.imag], axis=-1)
+        backbone_x = jnp.concatenate([mag, phase], axis=-1)
 
         processed_spec, new_state = self.backbone(backbone_x, state, key)
 
         n_bins = Zxx.shape[-1]
-        real = processed_spec[..., :n_bins]
-        imag = processed_spec[..., n_bins:]
-        Zxx_out = real + 1j * imag
+        mag = processed_spec[..., :n_bins]
+        phase = processed_spec[..., n_bins:]
+        Zxx_out = mag * jnp.exp(1j * phase)
 
         # [frames, freq] -> [freq, frames]
         Zxx_out = Zxx_out.T

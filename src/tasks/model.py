@@ -63,7 +63,7 @@ def build_linoss_spectral(subkey: PRNGKeyArray) -> eqx.Module:
             theta_max=jnp.pi
         ),
         block_config=StandardBlockConfig(drop_rate=0.1, prenorm=True),
-        head_config=RegressionHeadConfig(out_features=in_features, reduce=False, normalize=True),
+        head_config=RegressionHeadConfig(out_features=in_features, reduce=False, normalize=False),
     )
     return SpectralWrapper(
         backbone=cfg.build(key=subkey),
