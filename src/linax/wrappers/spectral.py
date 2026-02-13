@@ -19,6 +19,7 @@ class SpectralWrapper(eqx.Module):
     n_fft: int = eqx.field(static=True)
     hop_length: int = eqx.field(static=True)
     win_length: int = eqx.field(static=True)
+    power: float = eqx.field(static=True)
 
     def __init__(
             self,
@@ -31,6 +32,7 @@ class SpectralWrapper(eqx.Module):
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.win_length = win_length
+        self.power
 
     def __call__(
             self,
@@ -57,8 +59,10 @@ class SpectralWrapper(eqx.Module):
         Zxx = Zxx.T
         mag = jnp.abs(Zxx)
         phase = jnp.angle(Zxx)
+        mag_comp = mag ** self.power
+        Zxx_comp = mag_comp * jnp.exp(1j * phase)
 
-        backbone_x = jnp.concatenate([mag, phase], axis=-1)
+        backbone_x = jnp.concatenate([Zxx_comp.real, Zxx_comp.imag], axis=-1)
 
         processed_spec, new_state = self.backbone(backbone_x, state, key)
 
