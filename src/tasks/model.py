@@ -51,7 +51,7 @@ def build_linoss_spectral(subkey: PRNGKeyArray) -> eqx.Module:
     hidden_size = 64
     n_fft = 512
 
-    in_features = (n_fft // 2 + 1) * 2  # Real and imaginary parts of the spectrogram
+    in_features = (n_fft // 2 + 1)  # Real and imaginary parts of the spectrogram
     cfg = LinOSSConfig(
         num_blocks=4,
         encoder_config=LinearEncoderConfig(in_features=in_features, out_features=hidden_size),
