@@ -26,7 +26,7 @@ class SpectralWrapper(eqx.Module):
             backbone: SSM,
             n_fft: int = 512,
             hop_length: int = 256,
-            win_length: int = 512
+            win_length: int = 512,
             power: float = 0.3,
     ):
         self.backbone = backbone
