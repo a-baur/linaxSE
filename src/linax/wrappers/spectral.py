@@ -47,7 +47,7 @@ class SpectralWrapper(eqx.Module):
         original_length = x.shape[0]
 
         _, _, Zxx = jax.scipy.signal.stft(
-            x,
+            x.squeeze(),
             nperseg=self.win_length,
             noverlap=self.win_length - self.hop_length,
             nfft=self.n_fft,
@@ -81,5 +81,7 @@ class SpectralWrapper(eqx.Module):
         elif x_recon.shape[0] < original_length:
             diff = original_length - x_recon.shape[0]
             x_recon = jnp.pad(x_recon, ((0, diff),))
+
+        x_recon = jnp.expand_dims(x, 1)
 
         return x_recon, new_state
