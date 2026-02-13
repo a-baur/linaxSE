@@ -27,12 +27,13 @@ class SpectralWrapper(eqx.Module):
             n_fft: int = 512,
             hop_length: int = 256,
             win_length: int = 512
+            power: float = 0.3,
     ):
         self.backbone = backbone
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.win_length = win_length
-        self.power
+        self.power = power
 
     def __call__(
             self,

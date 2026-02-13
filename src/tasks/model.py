@@ -70,4 +70,5 @@ def build_linoss_spectral(subkey: PRNGKeyArray) -> eqx.Module:
         n_fft=n_fft,
         hop_length=256,
         win_length=512,
+        power=0.3
     )
