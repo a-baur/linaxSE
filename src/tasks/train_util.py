@@ -122,7 +122,7 @@ class EvalMetric:
 
 
 class TrainState(eqx.Module):
-    model: SSM
+    model: SSM | eqx.Module
     opt_state: optax.OptState
     model_state: eqx.nn.State
     key: PRNGKeyArray
