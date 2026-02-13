@@ -65,18 +65,26 @@ class SpectralWrapper(eqx.Module):
 
         backbone_x = jnp.concatenate([Zxx_comp.real, Zxx_comp.imag], axis=-1)
 
-        processed_spec, new_state = self.backbone(backbone_x, state, key)
+        mask_logits, new_state = self.backbone(backbone_x, state, key)
 
+        # 4. Complex Ratio Masking (cIRM)
         n_bins = Zxx.shape[-1]
-        mag = processed_spec[..., :n_bins]
-        phase = processed_spec[..., n_bins:]
-        Zxx_out = mag * jnp.exp(1j * phase)
+        mask_real = mask_logits[..., :n_bins]
+        mask_imag = mask_logits[..., n_bins:]
 
-        # [frames, freq] -> [freq, frames]
-        Zxx_out = Zxx_out.T
+        # Bound the mask (e.g., via tanh) to prevent output explosion
+        mask_real = jnp.tanh(mask_real)
+        mask_imag = jnp.tanh(mask_imag)
+        complex_mask = mask_real + 1j * mask_imag
+
+        # Apply predicted mask to the uncompressed input STFT
+        Zxx_enhanced = Zxx * complex_mask
+
+        # 5. ISTFT and Overlap-Add
+        Zxx_enhanced = Zxx_enhanced.T # [freq, frames]
 
         _, x_recon = jax.scipy.signal.istft(
-            Zxx_out,
+            Zxx_enhanced,
             nperseg=self.win_length,
             noverlap=self.win_length - self.hop_length,
             nfft=self.n_fft
