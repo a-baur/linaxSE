@@ -2,13 +2,12 @@ import equinox as eqx
 import jax
 import numpy as np
 import optax
-import torch
 from tqdm import tqdm
 
 from torch.utils.tensorboard import SummaryWriter
 
+import tasks.model as models
 from tasks.dataloader import get_vb_demand_dataloaders
-from tasks.model import build_linoss_time, build_linoss_spectral
 from tasks.train_util import TrainState, TrainConfig, evaluate, save_checkpoint, prompt_device_precheck
 
 
@@ -21,7 +20,7 @@ def train(train_cfg: TrainConfig):
     key = jax.random.PRNGKey(0)
     key, subkey = jax.random.split(key)
 
-    model = build_linoss_spectral(subkey=subkey)
+    model = models.build_linoss_noise_cancellation(subkey=subkey)
     state = eqx.nn.State(model=model)
 
     optimizer = optax.adam(train_cfg.learning_rate)

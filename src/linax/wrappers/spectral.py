@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import equinox as eqx
-from jaxtyping import Array, PRNGKeyArray
+from jaxtyping import Array, PRNGKeyArray, Float
 
 from linax.models import SSM
 
@@ -37,10 +37,10 @@ class SpectralWrapper(eqx.Module):
 
     def __call__(
             self,
-            x: Array,
+            x: Float[jax.Array, "time 1"],
             state: eqx.nn.State,
             key: PRNGKeyArray
-    ) -> tuple[Array, eqx.nn.State]:
+    ) -> tuple[Float[jax.Array, "time 1"], eqx.nn.State]:
         """
         Args:
             x: Input waveform [Time]
