@@ -59,7 +59,7 @@ class EvalMetric:
     value: float
 
     def __init__(self, label: str, values: Float[Array, "batch"]) -> None:
-        self.label = "EvalMetric"
+        self.label = label
         self.value = values.mean().item()
 
 
