@@ -105,8 +105,8 @@ class TrainState(eqx.Module):
             mask = item["mask"].numpy()
             pred_y, model_state = infer(inference_model, x, self.model_state, self.key)
             for name, func in loss_funcs.items():
-                loss_vals = func(y, pred_y, mask)
-                losses[name].append(loss_vals.mean().item())
+                loss_val = func(y, pred_y, mask)
+                losses[name].append(loss_val)
         return [EvalMetric(name, jnp.ndarray(vals)) for name, vals in losses.items()]
 
     @eqx.filter_jit
