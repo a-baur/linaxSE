@@ -6,16 +6,17 @@ from torch.utils.tensorboard import SummaryWriter
 
 import equinox as eqx
 import jax
+import jax.numpy as jnp
 import numpy as np
 import optax
-from pesq import pesq
-from jax import numpy as jnp
-from jaxtyping import Float, Array, Int, PRNGKeyArray
+from jax import Array
+from jaxtyping import Float, Int, PRNGKeyArray
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from linax.models import SSM
 from tasks import util
+from tasks.loss import mse_loss, si_sdr_loss, pesq_loss, l1_loss
 
 
 @eqx.filter_jit
@@ -36,73 +37,6 @@ def infer(
 
 
 @eqx.filter_jit
-def mse_loss(
-    y: Float[Array, "batch time feature"],
-    pred_y: Float[Array, "batch time feature"],
-    mask: Int[Array, "batch time feature"],
-) -> Float[Array, ""]:
-    mse = jnp.sum(((pred_y - y) ** 2) * mask) / jnp.sum(mask)
-    return mse
-
-
-@eqx.filter_jit
-def si_sdr_loss(
-    y: Float[Array, "batch time feature"],
-    pred_y: Float[Array, "batch time feature"],
-    mask: Int[Array, "batch time feature"],
-    zero_mean: bool = True,
-) -> Float[Array, ""]:
-    """
-    Computes Negative SI-SDR loss for a batch.
-
-    Args:
-        pred_y: (Batch, Time, 1) Estimated audio
-        y: (Batch, Time, 1) Clean target audio
-        mask: (Batch, Time, 1) Binary mask for valid lengths
-        zero_mean: Whether to zero-mean the signals before computation
-
-    Returns:
-        Negative SI-SDR loss
-    """
-    pred_y = pred_y.squeeze(-1) * mask.squeeze(-1)
-    y = y.squeeze(-1) * mask.squeeze(-1)
-
-    if zero_mean:
-        pred_y = pred_y - jnp.mean(pred_y, axis=-1, keepdims=True)
-        y = y - jnp.mean(y, axis=-1, keepdims=True)
-
-    eps = jax.numpy.finfo(pred_y.dtype).eps
-
-    alpha = (
-        (jnp.sum(pred_y * y, axis=-1, keepdims=True) + eps)
-        / (jnp.sum(y ** 2, axis=-1, keepdims=True) + eps)
-    )
-    target_scaled = alpha * y
-
-    noise = target_scaled - pred_y
-
-    target_pow = jnp.sum(target_scaled ** 2, axis=1) + eps
-    noise_pow = jnp.sum(noise ** 2, axis=1) + eps
-    si_sdr = 10.0 * jnp.log10(target_pow / noise_pow)
-
-    return -jnp.mean(si_sdr)
-
-
-def pesq_loss(
-    y: Float[Array, "batch time feature"],
-    pred_y: Float[Array, "batch time feature"],
-    mask: Int[Array, "batch time feature"],
-) -> Float[Array, ""]:
-    loss = 0
-    for i in range(y.shape[0]):
-        end_idx = jnp.sum(mask[i, :, 0])
-        ref = np.array(y[i][: end_idx]).squeeze()
-        deg = np.array(pred_y[i][: end_idx]).squeeze()
-        loss += pesq(fs=16000, ref=ref, deg=deg, mode="wb")
-    return loss / y.shape[0]
-
-
-@eqx.filter_jit
 def train_loss(
     model: SSM,
     x: Float[Array, "batch time feature"],
@@ -113,15 +47,20 @@ def train_loss(
 ) -> tuple[Float[Array, ""], eqx.nn.State]:
     """ Infer and compute MSE loss in single function call for training efficiency. """
     pred_y, model_state = infer(model, x, state, key)
-    loss = si_sdr_loss(y, pred_y, mask, zero_mean=True)
+    si_sdr = si_sdr_loss(y, pred_y, mask, zero_mean=True)
+    l1 = l1_loss(y, pred_y, mask)
+    loss = si_sdr + l1
     return loss, model_state
 
 
 @dataclass
 class EvalMetric:
-    mse: float
-    pesq: float
-    si_sdr: float
+    label: str
+    value: float
+
+    def __init__(self, label: str, values: Float[Array]) -> None:
+        self.label = "EvalMetric"
+        self.value = values.mean().item()
 
 
 class TrainState(eqx.Module):
@@ -150,25 +89,25 @@ class TrainState(eqx.Module):
             tx=self.tx,
         ), loss_val
 
-    def evaluate(self, test_loader: DataLoader) -> EvalMetric:
+    def evaluate(self, test_loader: DataLoader) -> list[EvalMetric]:
         """Evaluates the model on the test dataset."""
         inference_model = eqx.tree_inference(self.model, value=True)
-        cum_mse = 0
-        cum_pesq = 0
-        cum_sisdr = 0
+        loss_funcs = {
+            "MSE": mse_loss,
+            "SI-SDR": si_sdr_loss,
+            "PESQ": pesq_loss,
+            "L1": l1_loss,
+        }
+        losses = {name: [] for name in loss_funcs.keys()}
         for item in tqdm(test_loader, desc="Evaluating", leave=False):
             x = item["noisy"].numpy()
             y = item["clean"].numpy()
             mask = item["mask"].numpy()
             pred_y, model_state = infer(inference_model, x, self.model_state, self.key)
-            cum_mse += mse_loss(y, pred_y, mask).item()
-            cum_pesq += pesq_loss(y, pred_y, mask)
-            cum_sisdr += si_sdr_loss(y, pred_y, mask, zero_mean=True).item()
-        return EvalMetric(
-            mse=cum_mse / len(test_loader),
-            pesq=cum_pesq / len(test_loader),
-            si_sdr=cum_sisdr / len(test_loader),
-        )
+            for name, func in loss_funcs.items():
+                loss_vals = func(y, pred_y, mask)
+                losses[name].extend(loss_vals)
+        return [EvalMetric(name, jnp.ndarray(vals)) for name, vals in losses.items()]
 
     @eqx.filter_jit
     def create_samples(
