@@ -20,7 +20,7 @@ def train(train_cfg: TrainConfig):
     key = jax.random.PRNGKey(0)
     key, subkey = jax.random.split(key)
 
-    model = models.build_linoss_noise_cancellation(subkey=subkey)
+    model = models.build_linoss(subkey=subkey)
     state = eqx.nn.State(model=model)
 
     optimizer = optax.adam(train_cfg.learning_rate)
