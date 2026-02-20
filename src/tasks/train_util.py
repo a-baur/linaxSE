@@ -69,6 +69,7 @@ class TrainState(eqx.Module):
     model_state: eqx.nn.State
     key: PRNGKeyArray
     tx: optax.GradientTransformation = eqx.field(static=True)
+    step: int = eqx.field(default=0)
 
     @eqx.filter_jit
     def update(self, x, y, mask):
@@ -87,6 +88,7 @@ class TrainState(eqx.Module):
             model_state=new_model_state,
             key=key,
             tx=self.tx,
+            step=self.step + 1,
         ), loss_val
 
     def evaluate(self, test_loader: DataLoader) -> list[EvalMetric]:
@@ -146,17 +148,17 @@ class TrainConfig:
     num_audio_samples: int = 5
     ckpt_dir: str = "checkpoints"
     log_dir: str = "logs"
+    resume_from_last_chkpt: bool = False
 
     def __post_init__(self):
         os.makedirs(self.ckpt_dir, exist_ok=True)
 
 
-def evaluate(ts: TrainState, step: int, test_loader, writer: SummaryWriter, num_samples: int = 5):
+def evaluate(ts: TrainState, test_loader, writer: SummaryWriter, num_samples: int = 5):
     """Evaluates the model on the test dataset.
 
     Args:
         ts: TrainState containing the model and state.
-        step: Current training step.
         test_loader: DataLoader for the test dataset.
         writer: SummaryWriter for logging.
         num_samples: Number of audio samples to log.
@@ -164,35 +166,35 @@ def evaluate(ts: TrainState, step: int, test_loader, writer: SummaryWriter, num_
     eval_metrics = ts.evaluate(test_loader)
 
     for metric in eval_metrics:
-        writer.add_scalar(f"Eval/{metric.label}", metric.value, step)
+        writer.add_scalar(f"Eval/{metric.label}", metric.value, ts.step)
 
     x, y, y_pred, _ = ts.create_samples(test_loader, num_samples=num_samples)
-    if step == 0:
+    if ts.step == 0:
         for i in range(num_samples):
             writer.add_audio(
                 f"Source/Sample_{i}",
                 torch.from_numpy(np.array(x[i])).squeeze(),
-                step,
+                ts.step,
                 sample_rate=16000,
             )
             util.log_spectrogram(
                 writer,
                 f"Source/Spectrogram_Sample_{i}",
                 np.array(x[i]).squeeze(),
-                step,
+                ts.step,
                 sample_rate=16000,
             )
             writer.add_audio(
                 f"Target/Sample_{i}",
                 torch.from_numpy(np.array(y[i])).squeeze(),
-                step,
+                ts.step,
                 sample_rate=16000,
             )
             util.log_spectrogram(
                 writer,
                 f"Target/Spectrogram_Sample_{i}",
                 np.array(y[i]).squeeze(),
-                step,
+                ts.step,
                 sample_rate=16000,
             )
 
@@ -200,23 +202,40 @@ def evaluate(ts: TrainState, step: int, test_loader, writer: SummaryWriter, num_
         writer.add_audio(
             f"Eval/Sample_{i}",
             torch.from_numpy(np.array(sample)).squeeze(),
-            step,
+            ts.step,
             sample_rate=16000,
         )
         util.log_spectrogram(
             writer,
             f"Eval/Spectrogram_Sample_{i}",
             sample.squeeze(),
-            step,
+            ts.step,
             sample_rate=16000,
         )
 
 
-def save_checkpoint(model: eqx.Module, step: int, ckpt_dir: str):
+def save_checkpoint(ts: TrainState, ckpt_dir: str):
     """Saves the model checkpoint."""
-    ckpt_path = f"{ckpt_dir}/ckpt_step_{step}.eqx"
-    eqx.tree_serialise_leaves(ckpt_path, model)
-    print(f"\nSaved checkpoint at step {step} to {ckpt_path}")
+    ckpt_path = f"{ckpt_dir}/{ts.step}.eqx"
+    eqx.tree_serialise_leaves(ckpt_path, ts)
+    print(f"\nSaved checkpoint at step {ts.step} to {ckpt_path}")
+
+
+def load_checkpoint(ckpt_dir: str, ts_skeleton: TrainState) -> TrainState:
+    """Loads the complete training state from a checkpoint.
+
+    Args:
+        ckpt_dir: Path to the checkpoint directory containing the saved TrainState.
+        ts_skeleton: A newly initialized TrainState to use as a structural template.
+    """
+    files = os.listdir(ckpt_dir)
+    if not files:
+        raise FileNotFoundError(f"No checkpoint files found in {ckpt_dir}")
+    latest_ckpt = max(files, key=lambda f: int(f.split(".")[0]))
+    ckpt_path = os.path.join(ckpt_dir, latest_ckpt)
+
+    print(f"Resuming from checkpoint: {latest_ckpt}")
+    return eqx.tree_deserialise_leaves(ckpt_path, ts_skeleton)
 
 
 def prompt_device_precheck():
