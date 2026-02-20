@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 from linax.models import SSM
 from tasks import util
-from tasks.loss import mse_loss, si_sdr_loss, pesq_loss, l1_loss
+from tasks.loss import mse_loss, si_sdr_loss, pesq_loss, l1_loss, multi_res_stft_loss
 
 
 @eqx.filter_jit
@@ -47,9 +47,9 @@ def train_loss(
 ) -> tuple[Float[Array, ""], eqx.nn.State]:
     """ Infer and compute MSE loss in single function call for training efficiency. """
     pred_y, model_state = infer(model, x, state, key)
-    si_sdr = si_sdr_loss(y, pred_y, mask, zero_mean=True)
+    mrsl = multi_res_stft_loss(y, pred_y, mask)
     l1 = l1_loss(y, pred_y, mask)
-    loss = si_sdr + l1
+    loss = mrsl + l1
     return loss, model_state
 
 
@@ -93,10 +93,11 @@ class TrainState(eqx.Module):
         """Evaluates the model on the test dataset."""
         inference_model = eqx.tree_inference(self.model, value=True)
         loss_funcs = {
+            "L1": l1_loss,
             "MSE": mse_loss,
             "SI-SDR": si_sdr_loss,
             "PESQ": pesq_loss,
-            "L1": l1_loss,
+            "MultiResSTFT": multi_res_stft_loss,
         }
         losses = {name: [] for name in loss_funcs.keys()}
         for item in tqdm(test_loader, desc="Evaluating", leave=False):

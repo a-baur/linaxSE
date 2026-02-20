@@ -84,3 +84,51 @@ def pesq_loss(
         deg = np.array(pred_y[i][: end_idx]).squeeze()
         loss += pesq(fs=16000, ref=ref, deg=deg, mode="wb")
     return loss / y.shape[0]
+
+
+@eqx.filter_jit
+def multi_res_stft_loss(
+    y: Float[Array, "batch time feature"],
+    pred_y: Float[Array, "batch time feature"],
+    mask: Int[Array, "batch time feature"],
+    fft_sizes: tuple[int] = (512, 1024, 2048),
+    hop_sizes: tuple[int] = (50, 120, 240),
+    win_lengths: tuple[int] = (240, 600, 1200),
+) -> Float[Array, ""]:
+    """Compute multi-resolution spectral loss."""
+    y = (y * mask)[..., 0]
+    pred_y = (pred_y * mask)[..., 0]
+
+    total_loss = 0.0
+    num_resolutions = len(fft_sizes)
+    eps = jnp.finfo(y.dtype).eps
+
+    for (
+        fft_size,
+        hop_size,
+        win_length
+    ) in zip(fft_sizes, hop_sizes, win_lengths, strict=True):
+        _, _, y_stft = jax.scipy.signal.stft(
+            y,
+            nperseg=win_length,
+            noverlap=win_length - hop_size,
+            nfft=fft_size,
+        )
+        _, _, pred_y_stft = jax.scipy.signal.stft(
+            pred_y,
+            nperseg=win_length,
+            noverlap=win_length - hop_size,
+            nfft=fft_size,
+        )
+
+        y_mag = jnp.abs(y_stft)
+        pred_y_mag = jnp.abs(pred_y_stft)
+
+        sc_loss = jnp.mean(
+                jnp.linalg.norm(y_mag - pred_y_mag, ord='fro', axis=(1, 2))
+                / jnp.clip(jnp.linalg.norm(y_mag, ord='fro', axis=(1, 2)), a_min=eps)
+        )
+        lm_loss = jnp.mean(jnp.abs(jnp.log(pred_y_mag + eps) - jnp.log(y_mag + eps)))
+        total_loss += (sc_loss + lm_loss)
+
+    return total_loss / jnp.array(num_resolutions)
