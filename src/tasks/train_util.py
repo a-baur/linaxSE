@@ -58,7 +58,7 @@ class EvalMetric:
     label: str
     value: float
 
-    def __init__(self, label: str, values: Float[Array]) -> None:
+    def __init__(self, label: str, values: Float[Array, "batch"]) -> None:
         self.label = "EvalMetric"
         self.value = values.mean().item()
 
@@ -106,7 +106,7 @@ class TrainState(eqx.Module):
             pred_y, model_state = infer(inference_model, x, self.model_state, self.key)
             for name, func in loss_funcs.items():
                 loss_vals = func(y, pred_y, mask)
-                losses[name].extend(loss_vals)
+                losses[name].append(loss_vals.mean().item())
         return [EvalMetric(name, jnp.ndarray(vals)) for name, vals in losses.items()]
 
     @eqx.filter_jit
