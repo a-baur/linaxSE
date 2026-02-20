@@ -107,7 +107,7 @@ class TrainState(eqx.Module):
             for name, func in loss_funcs.items():
                 loss_val = func(y, pred_y, mask)
                 losses[name].append(loss_val)
-        return [EvalMetric(name, jnp.ndarray(vals)) for name, vals in losses.items()]
+        return [EvalMetric(name, jnp.array(vals)) for name, vals in losses.items()]
 
     @eqx.filter_jit
     def create_samples(
