@@ -1,4 +1,5 @@
 from datetime import datetime
+import time
 
 import equinox as eqx
 import jax
@@ -57,7 +58,11 @@ def train(train_cfg: TrainConfig):
                 x = item["noisy"].numpy()
                 y = item["clean"].numpy()
                 mask = item["mask"].numpy()
+
+                start = time.time()
                 ts, loss_value = ts.update(x, y, mask)
+                end_time = time.time()
+                print(f"Step {ts.step} - Loss: {loss_value:.4f} - Time: {end_time - start:.2f}s")
 
                 is_last_step = ts.step == total_steps - 1
                 if ts.step % train_cfg.log_interval == 0 or is_last_step:
@@ -65,6 +70,7 @@ def train(train_cfg: TrainConfig):
                     writer.add_scalar("Train/Loss", np.mean(loss_value).item(), ts.step)
 
                 if ts.step % train_cfg.eval_interval == 0 or is_last_step:
+                    print("evaluating...")
                     evaluate(
                         ts,
                         test_loader=test_loader,
