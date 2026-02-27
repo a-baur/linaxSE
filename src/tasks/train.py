@@ -82,7 +82,7 @@ def train(train_cfg: TrainConfig):
 if __name__ == "__main__":
     prompt_device_precheck()
 
-    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    date_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     train_cfg = TrainConfig(
         batch_size=32,
         num_epochs=200,
@@ -92,6 +92,6 @@ if __name__ == "__main__":
         eval_interval=500,
         save_interval=1000,
         ckpt_dir=f"ckpts/{date_str}",
-        resume_from_last_chkpt=True,
+        resume_from_last_chkpt=False,
     )
     train(train_cfg)
