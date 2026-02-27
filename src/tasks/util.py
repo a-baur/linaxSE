@@ -29,14 +29,12 @@ def get_cuda_devices() -> list[str]:
     return device_info
 
 
-def log_spectrogram(
-        writer: SummaryWriter,
-        tag: str,
+def create_spec(
         waveform: np.ndarray,
-        step: int,
         sample_rate=16000,
-):
-    """Computes and logs a spectrogram figure to TensorBoard."""
+        title="Spectrogram",
+) -> plt.Figure:
+    """Creates a spectrogram figure from a waveform."""
     fig, ax = plt.subplots(figsize=(10, 4))
 
     Pxx, freqs, bins, im = ax.specgram(
@@ -47,11 +45,22 @@ def log_spectrogram(
         cmap='viridis'
     )
 
-    ax.set_title(tag)
+    ax.set_title(title)
     ax.set_ylabel("Frequency (Hz)")
     ax.set_xlabel("Time (s)")
     fig.colorbar(im).set_label('Intensity (dB)')
 
-    writer.add_figure(tag, fig, global_step=step)
+    return fig
 
+
+def log_spectrogram(
+        writer: SummaryWriter,
+        tag: str,
+        waveform: np.ndarray,
+        step: int,
+        sample_rate=16000,
+):
+    """Computes and logs a spectrogram figure to TensorBoard."""
+    fig = create_spec(waveform, sample_rate=sample_rate, title=tag)
+    writer.add_figure(tag, fig, global_step=step)
     plt.close(fig)

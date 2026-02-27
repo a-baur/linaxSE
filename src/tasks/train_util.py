@@ -249,3 +249,25 @@ def prompt_device_precheck():
         )
         if proceed.lower() == "n":
             raise KeyboardInterrupt
+
+
+def load_for_inference(
+        model: eqx.Module, state: eqx.nn.State, key: PRNGKeyArray, ckpt_path: str
+) -> tuple[eqx.Module, eqx.nn.State]:
+    """Loads a checkpoint and prepares the model for inference."""
+    # Dummy optimizer and opt_state to create the TrainState skeleton
+    optimizer = optax.adam(1e-5)
+    opt_state = optimizer.init(eqx.filter(model, eqx.is_inexact_array))
+
+    ts_skeleton = TrainState(
+        model=model,
+        opt_state=opt_state,
+        model_state=state,
+        key=key,
+        tx=optimizer,
+        step=0
+    )
+
+    ts_loaded: TrainState = eqx.tree_deserialise_leaves(ckpt_path, ts_skeleton)
+    inference_model = eqx.tree_inference(ts_loaded.model, value=True)
+    return inference_model, ts_loaded.model_state
