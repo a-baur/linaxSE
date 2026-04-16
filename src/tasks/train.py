@@ -36,29 +36,35 @@ def train(train_cfg: TrainConfig):
         tx=optimizer,
     )
 
+    epoch_steps = len(train_loader)
     if train_cfg.resume_from_last_chkpt:
         ts = load_checkpoint(train_cfg.ckpt_dir, ts)
-        global_step = int(global_step)
-        start_epoch = global_step // len(train_loader)
+        global_step = int(ts.step)
+        start_epoch = global_step // epoch_steps
         print(f"Resumed from step {global_step} (Starting at Epoch {start_epoch})")
     else:
         global_step = 0
         start_epoch = 0
         print("Starting training.")
 
-    total_steps = train_cfg.num_epochs * len(train_loader)
+    total_steps = train_cfg.num_epochs * epoch_steps
     for epoch in range(start_epoch, train_cfg.num_epochs):
         with tqdm(
             enumerate(train_loader),
             desc=f"Epoch {epoch}/{train_cfg.num_epochs}",
-            total=len(train_loader)
+            total=epoch_steps
         ) as pbar:
-            for _, item in pbar:
+            for local_step, item in pbar:
+                if (epoch * epoch_steps + local_step) < global_step:
+                    # skip to relevant batch
+                    continue
+
                 item: dict
 
                 x = item["noisy"].numpy()
                 y = item["clean"].numpy()
                 mask = item["mask"].numpy()
+
                 ts, loss_value = ts.update(x, y, mask)
 
                 is_last_step = global_step == total_steps - 1
@@ -66,7 +72,7 @@ def train(train_cfg: TrainConfig):
                     pbar.set_postfix({"loss": f"{loss_value:.4f}"})
                     writer.add_scalar("Train/Loss", np.mean(loss_value).item(), global_step)
 
-                if False and global_step % train_cfg.eval_interval == 0 or is_last_step:
+                if global_step % train_cfg.eval_interval == 0 or is_last_step:
                     evaluate(
                         ts,
                         test_loader=test_loader,
@@ -78,6 +84,7 @@ def train(train_cfg: TrainConfig):
                     save_checkpoint(ts, train_cfg.ckpt_dir)
 
                 global_step += 1
+                local_step += 1
 
     print("Training complete.")
     return ts.model, ts.model_state
@@ -91,10 +98,10 @@ if __name__ == "__main__":
         batch_size=32,
         num_epochs=200,
         learning_rate=1e-5,
-        log_interval=1,
+        log_interval=50,
         num_audio_samples=15,
         eval_interval=500,
-        save_interval=1000,
+        save_interval=10,
         ckpt_dir=f"ckpts/{date_str}",
         resume_from_last_chkpt=False,
     )

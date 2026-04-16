@@ -69,7 +69,7 @@ class TrainState(eqx.Module):
     model_state: eqx.nn.State
     key: PRNGKeyArray
     tx: optax.GradientTransformation = eqx.field(static=True)
-    step: int = eqx.field(default=0)
+    step: Array = eqx.field(default_factory=lambda: jnp.array(0, dtype=jnp.int32))
 
     @eqx.filter_jit
     def update(self, x, y, mask):
@@ -88,7 +88,7 @@ class TrainState(eqx.Module):
             model_state=new_model_state,
             key=key,
             tx=self.tx,
-            step=1,
+            step=self.step + 1,
         ), loss_val
 
     def evaluate(self, test_loader: DataLoader) -> list[EvalMetric]:
