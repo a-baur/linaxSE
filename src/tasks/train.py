@@ -38,9 +38,11 @@ def train(train_cfg: TrainConfig):
 
     if train_cfg.resume_from_last_chkpt:
         ts = load_checkpoint(train_cfg.ckpt_dir, ts)
-        start_epoch = ts.step // len(train_loader)
-        print(f"Resumed from step {ts.step} (Starting at Epoch {start_epoch})")
+        global_step = int(global_step)
+        start_epoch = global_step // len(train_loader)
+        print(f"Resumed from step {global_step} (Starting at Epoch {start_epoch})")
     else:
+        global_step = 0
         start_epoch = 0
         print("Starting training.")
 
@@ -59,12 +61,12 @@ def train(train_cfg: TrainConfig):
                 mask = item["mask"].numpy()
                 ts, loss_value = ts.update(x, y, mask)
 
-                is_last_step = ts.step == total_steps - 1
-                if ts.step % train_cfg.log_interval == 0 or is_last_step:
+                is_last_step = global_step == total_steps - 1
+                if global_step % train_cfg.log_interval == 0 or is_last_step:
                     pbar.set_postfix({"loss": f"{loss_value:.4f}"})
-                    writer.add_scalar("Train/Loss", np.mean(loss_value).item(), ts.step)
+                    writer.add_scalar("Train/Loss", np.mean(loss_value).item(), global_step)
 
-                if ts.step % train_cfg.eval_interval == 0 or is_last_step:
+                if False and global_step % train_cfg.eval_interval == 0 or is_last_step:
                     evaluate(
                         ts,
                         test_loader=test_loader,
@@ -72,8 +74,10 @@ def train(train_cfg: TrainConfig):
                         num_samples=train_cfg.num_audio_samples
                     )
 
-                if (ts.step % train_cfg.save_interval == 0 and ts.step > 0) or is_last_step:
+                if (global_step % train_cfg.save_interval == 0 and global_step > 0) or is_last_step:
                     save_checkpoint(ts, train_cfg.ckpt_dir)
+
+                global_step += 1
 
     print("Training complete.")
     return ts.model, ts.model_state

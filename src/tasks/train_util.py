@@ -88,7 +88,7 @@ class TrainState(eqx.Module):
             model_state=new_model_state,
             key=key,
             tx=self.tx,
-            step=self.step + 1,
+            step=1,
         ), loss_val
 
     def evaluate(self, test_loader: DataLoader) -> list[EvalMetric]:
