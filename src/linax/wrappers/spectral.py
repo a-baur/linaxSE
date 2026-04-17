@@ -1,13 +1,13 @@
+import equinox as eqx
 import jax
 import jax.numpy as jnp
-import equinox as eqx
-from jaxtyping import Array, PRNGKeyArray, Float
+from jaxtyping import Array, Float, PRNGKeyArray
 
 from linax.models import SSM
 
 
 class SpectralWrapper(eqx.Module):
-    """ A wrapper that applies a SSM backbone in the spectral domain.
+    """A wrapper that applies a SSM backbone in the spectral domain.
 
     Args:
         backbone: The SSM module to apply in the spectral domain.
@@ -15,38 +15,31 @@ class SpectralWrapper(eqx.Module):
         hop_length: Hop length for STFT.
         win_length: Window length for STFT.
     """
+
     backbone: SSM
+    inference: bool
     n_fft: int = eqx.field(static=True)
     hop_length: int = eqx.field(static=True)
     win_length: int = eqx.field(static=True)
-    power: float = eqx.field(static=True)
 
     def __init__(
-            self,
-            backbone: SSM,
-            n_fft: int = 512,
-            hop_length: int = 256,
-            win_length: int = 512,
-            power: float = 0.3,
+        self,
+        backbone: SSM,
+        n_fft: int = 512,
+        hop_length: int = 256,
+        win_length: int = 512,
+        inference: bool = False,
     ):
         self.backbone = backbone
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.win_length = win_length
-        self.power = power
+        self.inference = inference
 
     def __call__(
-            self,
-            x: Float[jax.Array, "time 1"],
-            state: eqx.nn.State,
-            key: PRNGKeyArray
-    ) -> tuple[Float[jax.Array, "time 1"], eqx.nn.State]:
-        """
-        Args:
-            x: Input waveform [Time]
-            state: Backbone state
-            key: Random key
-        """
+        self, x: Float[jax.Array, "time bins"], state: eqx.nn.State, key: PRNGKeyArray
+    ) -> tuple[Float[jax.Array, "time bins"], eqx.nn.State]:
+        """Forward pass of Spectral Wrapper."""
         original_length = x.shape[0]
 
         _, _, Zxx = jax.scipy.signal.stft(
@@ -56,30 +49,25 @@ class SpectralWrapper(eqx.Module):
             nfft=self.n_fft,
         )
 
-        # [freq, frames] -> [frames, freq]
-        Zxx = Zxx.T
+        Zxx = Zxx.T  # [frames, freq]
         mag = jnp.abs(Zxx)
         phase = jnp.angle(Zxx)
-        mag_comp = mag ** self.power
-        Zxx_comp = mag_comp * jnp.exp(1j * phase)
 
-        mask_logits, new_state = self.backbone(Zxx_comp.real, state, key)
+        c_mag = jnp.log1p(mag)  # compress
+        c_mag_pred, new_state = self.backbone(c_mag, state, key)
 
-        # Bound the mask (e.g., via tanh) to prevent output explosion
-        mask_real = jnp.tanh(mask_logits)
-        complex_mask = mask_real + 1j * Zxx_comp.imag
+        if not self.inference:
+            # during training, return stft mag predictions
+            return c_mag_pred, new_state
 
-        # Apply predicted mask to the uncompressed input STFT
-        Zxx_enhanced = Zxx * complex_mask
-
-        # 5. ISTFT and Overlap-Add
+        mag_pred = jnp.expm1(c_mag_pred)  # uncompress
+        Zxx_enhanced = mag_pred * jnp.exp(1j * phase)
         Zxx_enhanced = Zxx_enhanced.T  # [freq, frames]
-
         _, x_recon = jax.scipy.signal.istft(
             Zxx_enhanced,
             nperseg=self.win_length,
             noverlap=self.win_length - self.hop_length,
-            nfft=self.n_fft
+            nfft=self.n_fft,
         )
 
         # adjust length to match input (due to padding in STFT)

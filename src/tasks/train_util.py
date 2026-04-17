@@ -1,22 +1,28 @@
 import os
 from dataclasses import dataclass
 
-import torch
-from torch.utils.tensorboard import SummaryWriter
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+import torch
 from jax import Array
 from jaxtyping import Float, Int, PRNGKeyArray
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from linax.models import SSM
 from tasks import util
-from tasks.loss import mse_loss, si_sdr_loss, pesq_loss, l1_loss, multi_res_stft_loss
+from tasks.loss import (
+    l1_loss,
+    mse_loss,
+    multi_res_stft_loss,
+    pesq_loss,
+    si_sdr_loss,
+    spectral_mag_loss,
+)
 
 
 @eqx.filter_jit
@@ -37,6 +43,21 @@ def infer(
 
 
 @eqx.filter_jit
+def spectral_train_loss(
+    model: SSM,
+    x: Float[Array, "batch time feature"],
+    y: Float[Array, "batch time feature"],
+    mask: Int[Array, "batch time feature"],
+    state: eqx.nn.State,
+    key: PRNGKeyArray,
+) -> tuple[Float[Array, ""], eqx.nn.State]:
+    """Infer and compute MSE loss in single function call for training efficiency."""
+    pred_c_mag, model_state = infer(model, x, state, key)
+    loss = spectral_mag_loss(y, pred_c_mag, mask)
+    return loss, model_state
+
+
+@eqx.filter_jit
 def train_loss(
     model: SSM,
     x: Float[Array, "batch time feature"],
@@ -45,7 +66,7 @@ def train_loss(
     state: eqx.nn.State,
     key: PRNGKeyArray,
 ) -> tuple[Float[Array, ""], eqx.nn.State]:
-    """ Infer and compute MSE loss in single function call for training efficiency. """
+    """Infer and compute MSE loss in single function call for training efficiency."""
     pred_y, model_state = infer(model, x, state, key)
     mrsl = multi_res_stft_loss(y, pred_y, mask)
     l1 = l1_loss(y, pred_y, mask)
@@ -74,9 +95,9 @@ class TrainState(eqx.Module):
     @eqx.filter_jit
     def update(self, x, y, mask):
         key, train_key = jax.random.split(self.key)  # update key for next step
-        (loss_val, new_model_state), grads = eqx.filter_value_and_grad(train_loss, has_aux=True)(
-            self.model, x, y, mask, self.model_state, train_key
-        )
+        (loss_val, new_model_state), grads = eqx.filter_value_and_grad(
+            spectral_train_loss, has_aux=True
+        )(self.model, x, y, mask, self.model_state, train_key)
         updates, new_opt_state = self.tx.update(
             grads, self.opt_state, eqx.filter(self.model, eqx.is_inexact_array)
         )
@@ -114,14 +135,14 @@ class TrainState(eqx.Module):
 
     @eqx.filter_jit
     def create_samples(
-            self,
-            test_loader: DataLoader,
-            num_samples: int = 5,
+        self,
+        test_loader: DataLoader,
+        num_samples: int = 5,
     ) -> tuple[
         Float[Array, "batch time feature"],
         Float[Array, "batch time feature"],
         Float[Array, "batch time feature"],
-        eqx.nn.State
+        eqx.nn.State,
     ]:
         """Generates enhanced samples from the model given noisy input."""
         inference_model = eqx.tree_inference(self.model, value=True)
@@ -244,15 +265,13 @@ def prompt_device_precheck():
     if n_gpus > 0:
         devices = util.get_cuda_devices()
         devices = "\n".join(devices)
-        proceed = input(
-            f"proceed training on the following cuda devices (y/n)?\n{devices}\n"
-        )
+        proceed = input(f"proceed training on the following cuda devices (y/n)?\n{devices}\n")
         if proceed.lower() == "n":
             raise KeyboardInterrupt
 
 
 def load_for_inference(
-        model: eqx.Module, state: eqx.nn.State, key: PRNGKeyArray, ckpt_path: str
+    model: eqx.Module, state: eqx.nn.State, key: PRNGKeyArray, ckpt_path: str
 ) -> tuple[eqx.Module, eqx.nn.State]:
     """Loads a checkpoint and prepares the model for inference."""
     # Dummy optimizer and opt_state to create the TrainState skeleton
@@ -260,12 +279,7 @@ def load_for_inference(
     opt_state = optimizer.init(eqx.filter(model, eqx.is_inexact_array))
 
     ts_skeleton = TrainState(
-        model=model,
-        opt_state=opt_state,
-        model_state=state,
-        key=key,
-        tx=optimizer,
-        step=0
+        model=model, opt_state=opt_state, model_state=state, key=key, tx=optimizer, step=0
     )
 
     ts_loaded: TrainState = eqx.tree_deserialise_leaves(ckpt_path, ts_skeleton)
