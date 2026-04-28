@@ -1,7 +1,7 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float, PRNGKeyArray
+from jaxtyping import Float, PRNGKeyArray
 
 from linax.models import SSM
 
@@ -23,12 +23,12 @@ class SpectralWrapper(eqx.Module):
     win_length: int = eqx.field(static=True)
 
     def __init__(
-        self,
-        backbone: SSM,
-        n_fft: int = 512,
-        hop_length: int = 256,
-        win_length: int = 512,
-        inference: bool = False,
+            self,
+            backbone: SSM,
+            n_fft: int = 512,
+            hop_length: int = 256,
+            win_length: int = 512,
+            inference: bool = False,
     ):
         self.backbone = backbone
         self.n_fft = n_fft
@@ -37,10 +37,11 @@ class SpectralWrapper(eqx.Module):
         self.inference = inference
 
     def __call__(
-        self, x: Float[jax.Array, "time bins"], state: eqx.nn.State, key: PRNGKeyArray
+            self, x: Float[jax.Array, "time bins"], state: eqx.nn.State, key: PRNGKeyArray
     ) -> tuple[Float[jax.Array, "time bins"], eqx.nn.State]:
         """Forward pass of Spectral Wrapper."""
         original_length = x.shape[0]
+        p = 0.3
 
         _, _, Zxx = jax.scipy.signal.stft(
             x.squeeze(),
@@ -49,20 +50,22 @@ class SpectralWrapper(eqx.Module):
             nfft=self.n_fft,
         )
 
-        Zxx = Zxx.T  # [frames, freq]
+        Zxx = Zxx.T  # [frames, bins]
+        n_frames, n_bins = Zxx.shape
         mag = jnp.abs(Zxx)
         phase = jnp.angle(Zxx)
 
-        c_mag = jnp.log1p(mag)  # compress
-        c_mag_pred, new_state = self.backbone(c_mag, state, key)
+        # Compressed magnitude as network input.
+        mag_c = mag ** p
 
-        if not self.inference:
-            # during training, return stft mag predictions
-            return c_mag_pred, new_state
+        # Magnitude-only mapping: backbone predicts compressed magnitude of the clean spectrum.
+        out, new_state = self.backbone(mag_c, state, key)
+        mag_c_pred = out.reshape(n_frames, n_bins)
 
-        mag_pred = jnp.expm1(c_mag_pred)  # uncompress
-        Zxx_enhanced = mag_pred * jnp.exp(1j * phase)
-        Zxx_enhanced = Zxx_enhanced.T  # [freq, frames]
+        # Decompress predicted magnitude and recombine with the noisy phase.
+        mag_pred = jnp.abs(mag_c_pred) ** (1.0 / p)
+
+        Zxx_enhanced = (mag_pred * jnp.exp(1j * phase)).T  # [bins, frames]
         _, x_recon = jax.scipy.signal.istft(
             Zxx_enhanced,
             nperseg=self.win_length,

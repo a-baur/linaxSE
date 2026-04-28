@@ -14,6 +14,7 @@ from tasks.train_util import (
     TrainState,
     evaluate,
     load_checkpoint,
+    print_model_summary,
     prompt_device_precheck,
     save_checkpoint,
 )
@@ -28,12 +29,22 @@ def train(train_cfg: TrainConfig):
     key = jax.random.PRNGKey(0)
     key, subkey = jax.random.split(key)
 
-    model = models.build_linoss_causal_spectral(subkey=subkey)
+    model = models.build_linoss_spectral(subkey=subkey)
     state = eqx.nn.State(model=model)
 
+    scheduler = optax.exponential_decay(
+        init_value=train_cfg.learning_rate,
+        transition_steps=train_cfg.lr_transition_steps,
+        decay_rate=train_cfg.lr_decay,
+    )
     optimizer = optax.chain(
         optax.clip_by_global_norm(3.0),
-        optax.adam(train_cfg.learning_rate),
+        optax.scale_by_adam(
+            b1=train_cfg.adam_beta1,
+            b2=train_cfg.adam_beta2,
+        ),
+        optax.scale_by_schedule(scheduler),
+        optax.scale(-1.0),
     )
     opt_state = optimizer.init(eqx.filter(model, eqx.is_inexact_array))
 
@@ -54,7 +65,8 @@ def train(train_cfg: TrainConfig):
     else:
         global_step = 0
         start_epoch = 0
-        print("Starting training.")
+
+    print_model_summary(ts.model)
 
     total_steps = train_cfg.num_epochs * epoch_steps
     for epoch in range(start_epoch, train_cfg.num_epochs):
@@ -63,11 +75,7 @@ def train(train_cfg: TrainConfig):
             desc=f"Epoch {epoch}/{train_cfg.num_epochs}",
             total=epoch_steps,
         ) as pbar:
-            for local_step, item in pbar:
-                if (epoch * epoch_steps + local_step) < global_step:
-                    # skip to relevant batch
-                    continue
-
+            for _, item in pbar:
                 item: dict
 
                 x = item["noisy"].numpy()
@@ -95,7 +103,6 @@ def train(train_cfg: TrainConfig):
                     save_checkpoint(ts, train_cfg.ckpt_dir)
 
                 global_step += 1
-                local_step += 1
 
     print("Training complete.")
     return ts.model, ts.model_state
@@ -107,13 +114,17 @@ if __name__ == "__main__":
     date_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     train_cfg = TrainConfig(
         batch_size=32,
-        num_epochs=200,
-        learning_rate=1e-5,
+        num_epochs=1000,
+        learning_rate=1e-4,
+        lr_transition_steps=10000,
+        adam_beta1=0.8,
+        adam_beta2=0.999,
+        lr_decay=0.99,
         log_interval=20,
         num_audio_samples=15,
-        eval_interval=20,
-        save_interval=1000,
-        ckpt_dir=f"ckpts/latest",
+        eval_interval=1000,
+        save_interval=5000,
+        ckpt_dir="ckpts/latest",
         log_dir="runs/latest",
         resume_from_last_chkpt=False,
     )

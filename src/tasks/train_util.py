@@ -68,9 +68,10 @@ def train_loss(
 ) -> tuple[Float[Array, ""], eqx.nn.State]:
     """Infer and compute MSE loss in single function call for training efficiency."""
     pred_y, model_state = infer(model, x, state, key)
-    mrsl = multi_res_stft_loss(y, pred_y, mask)
-    l1 = l1_loss(y, pred_y, mask)
-    loss = mrsl + l1
+    loss = multi_res_stft_loss(y, pred_y, mask)
+    # cplx = complex_stft_loss(y, pred_y, mask)
+    # l1 = l1_loss(y, pred_y, mask)
+    # loss = mrsl + cplx + l1
     return loss, model_state
 
 
@@ -95,9 +96,9 @@ class TrainState(eqx.Module):
     @eqx.filter_jit
     def update(self, x, y, mask):
         key, train_key = jax.random.split(self.key)  # update key for next step
-        (loss_val, new_model_state), grads = eqx.filter_value_and_grad(
-            spectral_train_loss, has_aux=True
-        )(self.model, x, y, mask, self.model_state, train_key)
+        (loss_val, new_model_state), grads = eqx.filter_value_and_grad(train_loss, has_aux=True)(
+            self.model, x, y, mask, self.model_state, train_key
+        )
         updates, new_opt_state = self.tx.update(
             grads, self.opt_state, eqx.filter(self.model, eqx.is_inexact_array)
         )
@@ -133,7 +134,6 @@ class TrainState(eqx.Module):
                 losses[name].append(loss_val)
         return [EvalMetric(name, jnp.array(vals)) for name, vals in losses.items()]
 
-    @eqx.filter_jit
     def create_samples(
         self,
         test_loader: DataLoader,
@@ -163,6 +163,10 @@ class TrainConfig:
     batch_size: int = 16
     num_epochs: int = 1
     learning_rate: float = 1e-3
+    lr_transition_steps: int = 1
+    adam_beta1: float = 0.8
+    adam_beta2: float = 0.999
+    lr_decay: float = 0.99
     log_interval: int = 50
     eval_interval: int = 200
     save_interval: int = 1000
@@ -239,7 +243,7 @@ def save_checkpoint(ts: TrainState, ckpt_dir: str):
     """Saves the model checkpoint."""
     ckpt_path = f"{ckpt_dir}/{ts.step}.eqx"
     eqx.tree_serialise_leaves(ckpt_path, ts)
-    print(f"\nSaved checkpoint at step {ts.step} to {ckpt_path}")
+    # print(f"\nSaved checkpoint at step {ts.step} to {ckpt_path}")
 
 
 def load_checkpoint(ckpt_dir: str, ts_skeleton: TrainState) -> TrainState:
@@ -285,3 +289,22 @@ def load_for_inference(
     ts_loaded: TrainState = eqx.tree_deserialise_leaves(ckpt_path, ts_skeleton)
     inference_model = eqx.tree_inference(ts_loaded.model, value=True)
     return inference_model, ts_loaded.model_state
+
+
+def print_model_summary(model: eqx.Module):
+    """Prints a concise overview of an Equinox model."""
+    trainable, static = eqx.partition(model, eqx.is_inexact_array)
+
+    all_leaves = jax.tree_util.tree_leaves(model)
+    arrays = [x for x in all_leaves if eqx.is_array(x)]
+
+    total_params = sum(x.size for x in arrays)
+    trainable_params = sum(x.size for x in jax.tree_util.tree_leaves(trainable) if x is not None)
+    total_size_mb = sum(x.nbytes for x in arrays) / (1024**2)
+
+    print(f"\n{' Model Overview ':=^35}")
+    print(f"Total Parameters:     {total_params:,}")
+    print(f"Trainable Params:     {trainable_params:,}")
+    print(f"Non-trainable Params: {total_params - trainable_params:,}")
+    print(f"Model Size:           {total_size_mb:.2f} MB")
+    print(f"{'=' * 35}\n")

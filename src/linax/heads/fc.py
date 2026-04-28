@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 import equinox as eqx
 import jax
-import jax.numpy as jnp
 from jaxtyping import Array, PRNGKeyArray
 
 from linax.heads.base import Head, HeadConfig
@@ -17,6 +16,7 @@ class FCHeadConfig(HeadConfig):
     """Configuration for the regression head."""
 
     out_features: int
+    apply_activation: bool = True
 
     def build(self, in_features: int, key: PRNGKeyArray) -> FCHead:
         """Build head from config."""
@@ -24,11 +24,12 @@ class FCHeadConfig(HeadConfig):
 
 
 class FCHead[ConfigType: FCHeadConfig](Head):
-    """Fully connected layer with activation."""
+    """Fully connected layer with optional activation."""
 
     linear: eqx.nn.Linear
     in_features: int
     out_features: int
+    apply_activation: bool = eqx.field(static=True)
 
     def __init__(self, in_features: int, cfg: ConfigType, key: PRNGKeyArray):
         """Initialize the fc head."""
@@ -36,9 +37,11 @@ class FCHead[ConfigType: FCHeadConfig](Head):
             in_features=in_features, out_features=cfg.out_features, key=key
         )
         self.in_features, self.out_features = in_features, cfg.out_features
+        self.apply_activation = cfg.apply_activation
 
     def __call__(self, x: Array, state: eqx.nn.State) -> tuple[Array, eqx.nn.State]:
         """Forward pass of the fc head."""
         x = jax.vmap(self.linear)(x)
-        x = jax.nn.relu(x)
+        if self.apply_activation:
+            x = jax.nn.relu(x)
         return x, state

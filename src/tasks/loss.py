@@ -109,6 +109,28 @@ def pesq_loss(
 
 
 @eqx.filter_jit
+def complex_stft_loss(
+    y: Float[Array, "batch time feature"],
+    pred_y: Float[Array, "batch time feature"],
+    mask: Int[Array, "batch time feature"],
+    n_fft: int = 512,
+    hop_length: int = 256,
+    win_length: int = 512,
+) -> Float[Array, ""]:
+    """L1 on real and imaginary parts of the STFT — phase-sensitive."""
+    y = (y * mask)[..., 0]
+    pred_y = (pred_y * mask)[..., 0]
+
+    _, _, Y = jax.scipy.signal.stft(
+        y, nperseg=win_length, noverlap=win_length - hop_length, nfft=n_fft
+    )
+    _, _, Yp = jax.scipy.signal.stft(
+        pred_y, nperseg=win_length, noverlap=win_length - hop_length, nfft=n_fft
+    )
+    return jnp.mean(jnp.abs(Y.real - Yp.real)) + jnp.mean(jnp.abs(Y.imag - Yp.imag))
+
+
+@eqx.filter_jit
 def multi_res_stft_loss(
     y: Float[Array, "batch time feature"],
     pred_y: Float[Array, "batch time feature"],
