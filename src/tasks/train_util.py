@@ -14,6 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from linax.models import SSM
+from linax.wrappers import ModelOutput
 from tasks import util
 from tasks.loss import (
     l1_loss,
@@ -21,57 +22,67 @@ from tasks.loss import (
     multi_res_stft_loss,
     pesq_loss,
     si_sdr_loss,
+    spectral_losses,
     spectral_mag_loss,
 )
 
 
 @eqx.filter_jit
 def infer(
-    model: SSM,
-    x: Float[Array, "batch time feature"],
-    state: eqx.nn.State,
-    key: PRNGKeyArray,
-) -> tuple[Float[Array, ""], eqx.nn.State]:
+        model: SSM,
+        x: Float[Array, "batch time feature"],
+        state: eqx.nn.State,
+        key: PRNGKeyArray,
+) -> tuple[ModelOutput, eqx.nn.State]:
     batch_keys = jax.random.split(key, x.shape[0])
-    pred_y, model_state = jax.vmap(
+    output, model_state = jax.vmap(
         model,
         axis_name="batch",
         in_axes=(0, None, 0),
         out_axes=(0, None),
     )(x, state, batch_keys)
-    return pred_y, model_state
+    return output, model_state
 
 
 @eqx.filter_jit
 def spectral_train_loss(
-    model: SSM,
-    x: Float[Array, "batch time feature"],
-    y: Float[Array, "batch time feature"],
-    mask: Int[Array, "batch time feature"],
-    state: eqx.nn.State,
-    key: PRNGKeyArray,
+        model: SSM,
+        x: Float[Array, "batch time feature"],
+        y: Float[Array, "batch time feature"],
+        mask: Int[Array, "batch time feature"],
+        state: eqx.nn.State,
+        key: PRNGKeyArray,
 ) -> tuple[Float[Array, ""], eqx.nn.State]:
     """Infer and compute MSE loss in single function call for training efficiency."""
-    pred_c_mag, model_state = infer(model, x, state, key)
-    loss = spectral_mag_loss(y, pred_c_mag, mask)
+    output, model_state = infer(model, x, state, key)
+    loss = spectral_mag_loss(y, output.prediction, mask)
     return loss, model_state
 
 
 @eqx.filter_jit
 def train_loss(
-    model: SSM,
-    x: Float[Array, "batch time feature"],
-    y: Float[Array, "batch time feature"],
-    mask: Int[Array, "batch time feature"],
-    state: eqx.nn.State,
-    key: PRNGKeyArray,
+        model: SSM,
+        x: Float[Array, "batch time feature"],
+        y: Float[Array, "batch time feature"],
+        mask: Int[Array, "batch time feature"],
+        state: eqx.nn.State,
+        key: PRNGKeyArray,
 ) -> tuple[Float[Array, ""], eqx.nn.State]:
-    """Infer and compute MSE loss in single function call for training efficiency."""
-    pred_y, model_state = infer(model, x, state, key)
-    loss = multi_res_stft_loss(y, pred_y, mask)
-    # cplx = complex_stft_loss(y, pred_y, mask)
-    # l1 = l1_loss(y, pred_y, mask)
-    # loss = mrsl + cplx + l1
+    """Combined SEMamba-style training loss.
+
+    Spectral terms (magnitude, anti-wrapping phase, complex) share a single
+    STFT of `y` and consume `mag_pred` / `phase_pred` from the model's aux
+    so we don't re-STFT the time-domain prediction. Time-domain L1 is added
+    on top.
+    """
+    output, model_state = infer(model, x, state, key)
+    mag_pred = output.aux["mag_c_pred"]
+    phase_pred = output.aux["phase_pred"]
+
+    mag_l, pha_l, com_l = spectral_losses(y, mag_pred, phase_pred, mask)
+    time_l = l1_loss(y, output.prediction, mask)
+
+    loss = 0.9 * mag_l + 0.3 * pha_l + 0.1 * com_l + 0.2 * time_l
     return loss, model_state
 
 
@@ -125,19 +136,20 @@ class TrainState(eqx.Module):
         }
         losses = {name: [] for name in loss_funcs.keys()}
         for item in tqdm(test_loader, desc="Evaluating", leave=False):
-            x = item["noisy"].numpy()
-            y = item["clean"].numpy()
-            mask = item["mask"].numpy()
-            pred_y, model_state = infer(inference_model, x, self.model_state, self.key)
+            x = item["arrays"]["noisy"].numpy()
+            y = item["arrays"]["clean"].numpy()
+            mask = item["arrays"]["mask"].numpy()
+            output, model_state = infer(inference_model, x, self.model_state, self.key)
+            pred_y = output.prediction
             for name, func in loss_funcs.items():
                 loss_val = func(y, pred_y, mask)
                 losses[name].append(loss_val)
         return [EvalMetric(name, jnp.array(vals)) for name, vals in losses.items()]
 
     def create_samples(
-        self,
-        test_loader: DataLoader,
-        num_samples: int = 5,
+            self,
+            test_loader: DataLoader,
+            num_samples: int = 5,
     ) -> tuple[
         Float[Array, "batch time feature"],
         Float[Array, "batch time feature"],
@@ -147,20 +159,21 @@ class TrainState(eqx.Module):
         """Generates enhanced samples from the model given noisy input."""
         inference_model = eqx.tree_inference(self.model, value=True)
         batch = next(iter(test_loader))
-        x = batch["noisy"].numpy()[:num_samples]
-        y = batch["clean"].numpy()[:num_samples]
-        pred_y, model_state = jax.vmap(
+        x = batch["arrays"]["noisy"].numpy()[:num_samples]
+        y = batch["arrays"]["clean"].numpy()[:num_samples]
+        output, model_state = jax.vmap(
             inference_model,
             axis_name="batch",
             in_axes=(0, None, 0),
             out_axes=(0, None),
         )(x, self.model_state, jax.random.split(self.key, x.shape[0]))
-        return x, y, pred_y, model_state
+        return x, y, output.prediction, model_state
 
 
 @dataclass
 class TrainConfig:
     batch_size: int = 16
+    num_workers: int = 4
     num_epochs: int = 1
     learning_rate: float = 1e-3
     lr_transition_steps: int = 1
@@ -194,7 +207,8 @@ def evaluate(ts: TrainState, test_loader, writer: SummaryWriter, num_samples: in
         writer.add_scalar(f"Eval/{metric.label}", metric.value, ts.step)
 
     x, y, y_pred, _ = ts.create_samples(test_loader, num_samples=num_samples)
-    if ts.step == 0:
+    if ts.step == 1:
+        # For first step, create source-target spectrograms for comparison
         for i in range(num_samples):
             writer.add_audio(
                 f"Source/Sample_{i}",
@@ -222,21 +236,22 @@ def evaluate(ts: TrainState, test_loader, writer: SummaryWriter, num_samples: in
                 ts.step,
                 sample_rate=16000,
             )
-
-    for i, sample in enumerate(y_pred):
-        writer.add_audio(
-            f"Eval/Sample_{i}",
-            torch.from_numpy(np.array(sample)).squeeze(),
-            ts.step,
-            sample_rate=16000,
-        )
-        util.log_spectrogram(
-            writer,
-            f"Eval/Spectrogram_Sample_{i}",
-            sample.squeeze(),
-            ts.step,
-            sample_rate=16000,
-        )
+    else:
+        # After first step, use model to create eval spectrograms
+        for i, sample in enumerate(y_pred):
+            writer.add_audio(
+                f"Eval/Sample_{i}",
+                torch.from_numpy(np.array(sample)).squeeze(),
+                ts.step,
+                sample_rate=16000,
+            )
+            util.log_spectrogram(
+                writer,
+                f"Eval/Spectrogram_Sample_{i}",
+                sample.squeeze(),
+                ts.step,
+                sample_rate=16000,
+            )
 
 
 def save_checkpoint(ts: TrainState, ckpt_dir: str):
@@ -275,7 +290,7 @@ def prompt_device_precheck():
 
 
 def load_for_inference(
-    model: eqx.Module, state: eqx.nn.State, key: PRNGKeyArray, ckpt_path: str
+        model: eqx.Module, state: eqx.nn.State, key: PRNGKeyArray, ckpt_path: str
 ) -> tuple[eqx.Module, eqx.nn.State]:
     """Loads a checkpoint and prepares the model for inference."""
     # Dummy optimizer and opt_state to create the TrainState skeleton
@@ -300,7 +315,7 @@ def print_model_summary(model: eqx.Module):
 
     total_params = sum(x.size for x in arrays)
     trainable_params = sum(x.size for x in jax.tree_util.tree_leaves(trainable) if x is not None)
-    total_size_mb = sum(x.nbytes for x in arrays) / (1024**2)
+    total_size_mb = sum(x.nbytes for x in arrays) / (1024 ** 2)
 
     print(f"\n{' Model Overview ':=^35}")
     print(f"Total Parameters:     {total_params:,}")

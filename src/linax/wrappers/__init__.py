@@ -1,4 +1,5 @@
-from .spectral import SpectralWrapper
 from .noise_cancellation import NoiseCancellationWrapper
+from .output import ModelOutput
+from .spectral import SpectralWrapper
 
-__all__ = ["SpectralWrapper", "NoiseCancellationWrapper"]
+__all__ = ["ModelOutput", "NoiseCancellationWrapper", "SpectralWrapper"]

@@ -20,16 +20,25 @@ from tasks.train_util import (
 )
 
 
+def prefetch_to_jax(dataloader):
+    """Yields JAX arrays directly to the GPU."""
+    for batch in dataloader:
+        yield jax.tree_util.tree_map(lambda x: jax.device_put(x.numpy()), batch["arrays"])
+
+
 def train(train_cfg: TrainConfig):
     """Trains the model on the training dataset."""
     writer = SummaryWriter(train_cfg.log_dir)
 
-    train_loader, test_loader = get_vb_demand_dataloaders(batch_size=train_cfg.batch_size)
+    train_loader, test_loader = get_vb_demand_dataloaders(
+        batch_size=train_cfg.batch_size,
+        num_workers=train_cfg.num_workers,
+    )
 
     key = jax.random.PRNGKey(0)
     key, subkey = jax.random.split(key)
 
-    model = models.build_linoss_spectral(subkey=subkey)
+    model = models.build_se_linoss(subkey=subkey)
     state = eqx.nn.State(model=model)
 
     scheduler = optax.exponential_decay(
@@ -71,16 +80,16 @@ def train(train_cfg: TrainConfig):
     total_steps = train_cfg.num_epochs * epoch_steps
     for epoch in range(start_epoch, train_cfg.num_epochs):
         with tqdm(
-            enumerate(train_loader),
-            desc=f"Epoch {epoch}/{train_cfg.num_epochs}",
-            total=epoch_steps,
+                enumerate(prefetch_to_jax(train_loader)),
+                desc=f"Epoch {epoch}/{train_cfg.num_epochs}",
+                total=epoch_steps,
         ) as pbar:
             for _, item in pbar:
                 item: dict
 
-                x = item["noisy"].numpy()
-                y = item["clean"].numpy()
-                mask = item["mask"].numpy()
+                x = item["noisy"]
+                y = item["clean"]
+                mask = item["mask"]
 
                 ts, loss_value = ts.update(x, y, mask)
 
@@ -98,7 +107,7 @@ def train(train_cfg: TrainConfig):
                     )
 
                 if (
-                    global_step % train_cfg.save_interval == 0 and global_step > 0
+                        global_step % train_cfg.save_interval == 0 and global_step > 0
                 ) or is_last_step:
                     save_checkpoint(ts, train_cfg.ckpt_dir)
 
@@ -109,20 +118,27 @@ def train(train_cfg: TrainConfig):
 
 
 if __name__ == "__main__":
+    import os
+
+    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+    os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
+
     prompt_device_precheck()
 
     date_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     train_cfg = TrainConfig(
-        batch_size=32,
+        batch_size=64,
+        num_workers=32,
         num_epochs=1000,
-        learning_rate=1e-4,
+        learning_rate=1e-5,
         lr_transition_steps=10000,
         adam_beta1=0.8,
-        adam_beta2=0.999,
+        adam_beta2=0.99,
         lr_decay=0.99,
         log_interval=20,
         num_audio_samples=15,
-        eval_interval=1000,
+        eval_interval=50,
         save_interval=5000,
         ckpt_dir="ckpts/latest",
         log_dir="runs/latest",

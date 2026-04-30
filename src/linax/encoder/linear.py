@@ -34,7 +34,7 @@ class LinearEncoderConfig(EncoderConfig):
             The encoder instance.
         """
         return LinearEncoder(
-            in_features=self.in_features, out_features=self.out_features, cfg=self, key=key
+            in_features=self.in_features, out_features=self.out_channels, cfg=self, key=key
         )
 
 

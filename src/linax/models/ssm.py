@@ -64,7 +64,7 @@ class SSMConfig:
     sequence_mixer_configs: list[SequenceMixerConfig]
     block_configs: list[BlockConfig]
     channel_mixer_configs: list[ChannelMixerConfig]
-    head_config: HeadConfig
+    mag_decoder_config: HeadConfig
 
     def __post_init__(self):
         """Validate config."""
@@ -130,7 +130,7 @@ class SSM[ConfigType: SSMConfig](eqx.Module):
         self.encoder = cfg.encoder_config.build(key=keys[0])
 
         # Get hidden_dim from encoder output
-        hidden_dim = cfg.encoder_config.out_features
+        hidden_dim = cfg.encoder_config.out_channels
 
         sequence_mixers = [
             mixer_cfg.build(in_features=hidden_dim, key=keys[1 + i])
@@ -157,10 +157,10 @@ class SSM[ConfigType: SSMConfig](eqx.Module):
         ]
 
         # Build head from its config (pass in_features from encoder)
-        self.head = cfg.head_config.build(in_features=hidden_dim, key=keys[-1])
+        self.head = cfg.mag_decoder_config.build(in_features=hidden_dim, key=keys[-1])
 
     def __call__(
-        self, x: Array, state: eqx.nn.State, key: PRNGKeyArray
+            self, x: Array, state: eqx.nn.State, key: PRNGKeyArray
     ) -> tuple[Array, eqx.nn.State]:
         """Forward pass of the SSM model.
 

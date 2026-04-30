@@ -2,15 +2,25 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import PRNGKeyArray
 
-from linax.blocks import StandardBlockConfig
-from linax.encoder import ConvEncoderConfig, LinearEncoderConfig
-from linax.heads import RegressionHeadConfig
-from linax.heads.fc import FCHeadConfig
+from linax.blocks import StandardBlockConfig, TFBlockConfig
+from linax.encoder import ConvEncoderConfig, LinearEncoderConfig, DenseEncoderConfig
+from linax.heads import (
+    FCHeadConfig,
+    MagDecoderHeadConfig,
+    PhaseDecoderHeadConfig,
+    RegressionHeadConfig,
+)
 from linax.models.linoss import LinOSSConfig
+from linax.models.se_linoss import SELinOSSConfig
 from linax.sequence_mixers import LinOSSSequenceMixerConfig
 from linax.wrappers import NoiseCancellationWrapper, SpectralWrapper
 
-__all__ = ["build_linoss", "build_linoss_spectral", "build_linoss_noise_cancellation"]
+__all__ = [
+    "build_linoss",
+    "build_linoss_spectral",
+    "build_linoss_noise_cancellation",
+    "build_se_linoss",
+]
 
 
 def build_linoss(subkey: PRNGKeyArray) -> eqx.Module:
@@ -79,33 +89,67 @@ def build_linoss_noise_cancellation(subkey: PRNGKeyArray) -> eqx.Module:
 
 def build_linoss_spectral(subkey: PRNGKeyArray) -> eqx.Module:
     """Load a spectral-domain LinOSS model with given configuration."""
-    hidden_size = 128
+    hidden_size = 64
     n_fft = 512
     n_bins = n_fft // 2 + 1
-    in_features = n_bins  # magnitude per bin
-
-    in_dims = (in_features, 512, 256, 128)
-    out_dims = (512, 256, 128, 256)
-    kernel_sizes = (3, 3, 3, 3)
 
     cfg = LinOSSConfig(
-        num_blocks=4,
-        encoder_config=ConvEncoderConfig(
-            in_features=in_dims[0],
-            out_features=out_dims[-1],
-            in_dims=in_dims,
-            out_dims=out_dims,
-            kernel_size=kernel_sizes,
+        num_blocks=2,
+        encoder_config=DenseEncoderConfig(
+            in_channels=2,
+            out_channels=hidden_size,
+            dense_layers=4
         ),
         sequence_mixer_config=LinOSSSequenceMixerConfig(
-            state_dim=hidden_size, discretization="IMEX", damping=True, r_min=0.9, theta_max=jnp.pi
+            state_dim=hidden_size,
+            discretization="IMEX",
+            damping=True,
+            r_min=0.9,
+            theta_max=jnp.pi,
         ),
         block_config=StandardBlockConfig(drop_rate=0.1, prenorm=True),
-        head_config=FCHeadConfig(out_features=n_bins, apply_activation=False),
+        head_config=FCHeadConfig(out_features=2 * n_bins, apply_activation=False),
     )
 
     return SpectralWrapper(
-        backbone=cfg.build(key=subkey),
+        generator=cfg.build(key=subkey),
+        n_fft=n_fft,
+        hop_length=256,  # 16 ms
+        win_length=512,  # 32 ms
+    )
+
+
+def build_se_linoss(subkey: PRNGKeyArray) -> eqx.Module:
+    """Load an SE-LinOSS (SEMamba-style time/freq LinOSS) model.
+
+    Dense encoder → stack of TF blocks (separate time and freq LinOSS scans
+    per block) → mag/phase decoders that upsample the freq axis and collapse
+    channels. Wrapped in a ``SpectralWrapper`` for end-to-end waveform IO.
+    """
+    hidden_size = 64
+    n_fft = 512
+
+    cfg = SELinOSSConfig(
+        num_blocks=2,
+        encoder_config=DenseEncoderConfig(
+            in_channels=2,
+            out_channels=hidden_size,
+            dense_layers=4,
+        ),
+        sequence_mixer_config=LinOSSSequenceMixerConfig(
+            state_dim=hidden_size,
+            discretization="IMEX",
+            damping=True,
+            r_min=0.9,
+            theta_max=jnp.pi,
+        ),
+        block_config=TFBlockConfig(drop_rate=0.1, prenorm=True),
+        mag_decoder_config=MagDecoderHeadConfig(),
+        phase_decoder_config=PhaseDecoderHeadConfig(),
+    )
+
+    return SpectralWrapper(
+        generator=cfg.build(key=subkey),
         n_fft=n_fft,
         hop_length=256,  # 16 ms
         win_length=512,  # 32 ms

@@ -3,6 +3,7 @@ from jax import Array
 from jaxtyping import PRNGKeyArray, Float
 
 from linax.models import SSM
+from linax.wrappers.output import ModelOutput
 
 
 class NoiseCancellationWrapper(eqx.Module):
@@ -21,7 +22,7 @@ class NoiseCancellationWrapper(eqx.Module):
             x: Float[Array, "time 1"],
             state: eqx.nn.State,
             key: PRNGKeyArray
-    ) -> tuple[Array, eqx.nn.State]:
+    ) -> tuple[ModelOutput, eqx.nn.State]:
         """
         Args:
             x: Input waveform [Time]
@@ -30,4 +31,4 @@ class NoiseCancellationWrapper(eqx.Module):
         """
         pred_n, state = self.backbone(x, state, key)
         pred_y = x - pred_n
-        return pred_y, state
+        return ModelOutput(prediction=pred_y, aux={}), state

@@ -33,7 +33,7 @@ class EmbeddingEncoderConfig(EncoderConfig):
         """
         # in_features represents num_classes for embedding encoder
         return EmbeddingEncoder(
-            num_classes=self.num_classes, out_features=self.out_features, cfg=self, key=key
+            num_classes=self.num_classes, out_features=self.out_channels, cfg=self, key=key
         )
 
 

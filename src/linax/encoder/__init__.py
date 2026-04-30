@@ -2,6 +2,7 @@
 
 from linax.encoder.base import Encoder, EncoderConfig
 from linax.encoder.conv import ConvEncoder, ConvEncoderConfig
+from linax.encoder.dense import DenseEncoder, DenseEncoderConfig
 from linax.encoder.embedding import (
     EmbeddingEncoder,
     EmbeddingEncoderConfig,
@@ -15,6 +16,8 @@ __all__ = [
     "Encoder",
     "LinearEncoder",
     "LinearEncoderConfig",
+    "DenseEncoder",
+    "DenseEncoderConfig",
     "EmbeddingEncoder",
     "EmbeddingEncoderConfig",
 ]

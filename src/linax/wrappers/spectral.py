@@ -4,19 +4,20 @@ import jax.numpy as jnp
 from jaxtyping import Float, PRNGKeyArray
 
 from linax.models import SSM
+from linax.wrappers.output import ModelOutput
 
 
 class SpectralWrapper(eqx.Module):
     """A wrapper that applies a SSM backbone in the spectral domain.
 
     Args:
-        backbone: The SSM module to apply in the spectral domain.
+        generator: The SSM module to generate the magnitude.
         n_fft: Number of FFT points for STFT.
         hop_length: Hop length for STFT.
         win_length: Window length for STFT.
     """
 
-    backbone: SSM
+    generator: SSM
     inference: bool
     n_fft: int = eqx.field(static=True)
     hop_length: int = eqx.field(static=True)
@@ -24,13 +25,13 @@ class SpectralWrapper(eqx.Module):
 
     def __init__(
             self,
-            backbone: SSM,
+            generator: SSM,
             n_fft: int = 512,
             hop_length: int = 256,
             win_length: int = 512,
             inference: bool = False,
     ):
-        self.backbone = backbone
+        self.generator = generator
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.win_length = win_length
@@ -38,7 +39,7 @@ class SpectralWrapper(eqx.Module):
 
     def __call__(
             self, x: Float[jax.Array, "time bins"], state: eqx.nn.State, key: PRNGKeyArray
-    ) -> tuple[Float[jax.Array, "time bins"], eqx.nn.State]:
+    ) -> tuple[ModelOutput, eqx.nn.State]:
         """Forward pass of Spectral Wrapper."""
         original_length = x.shape[0]
         p = 0.3
@@ -57,15 +58,20 @@ class SpectralWrapper(eqx.Module):
 
         # Compressed magnitude as network input.
         mag_c = mag ** p
+        in_features = jnp.stack([mag_c, phase], axis=0)  # [2, frames, bins]
 
-        # Magnitude-only mapping: backbone predicts compressed magnitude of the clean spectrum.
-        out, new_state = self.backbone(mag_c, state, key)
-        mag_c_pred = out.reshape(n_frames, n_bins)
+        out, new_state = self.generator(in_features, state, key)
+
+        mag_mask_out, phase_out = jnp.split(out, 2, axis=1)
+
+        mag_mask_pred = mag_mask_out.reshape(n_frames, n_bins)
+        mag_c_pred = jnp.abs(mag_c * mag_mask_pred)
+        phase_pred = phase_out.reshape(n_frames, n_bins)
 
         # Decompress predicted magnitude and recombine with the noisy phase.
-        mag_pred = jnp.abs(mag_c_pred) ** (1.0 / p)
+        mag_pred = mag_c_pred ** (1.0 / p)
 
-        Zxx_enhanced = (mag_pred * jnp.exp(1j * phase)).T  # [bins, frames]
+        Zxx_enhanced = (mag_pred * jnp.exp(1j * phase_pred)).T  # [bins, frames]
         _, x_recon = jax.scipy.signal.istft(
             Zxx_enhanced,
             nperseg=self.win_length,
@@ -81,4 +87,8 @@ class SpectralWrapper(eqx.Module):
             x_recon = jnp.pad(x_recon, ((0, diff),))
         x_recon = x_recon[:, None]  # reintroduce last dimension
 
-        return x_recon, new_state
+        output = ModelOutput(
+            prediction=x_recon,
+            aux={"mag_c_pred": mag_c_pred, "mag_pred": mag_pred, "phase_pred": phase_pred},
+        )
+        return output, new_state

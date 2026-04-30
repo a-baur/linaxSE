@@ -1,8 +1,10 @@
 import os
 
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from jax.scipy import signal
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -29,27 +31,45 @@ def get_cuda_devices() -> list[str]:
 
 
 def create_spec(
-        waveform: np.ndarray,
-        sample_rate=16000,
-        title="Spectrogram",
+        waveform: jnp.ndarray,
+        sample_rate: int = 16000,
+        title: str = "Spectrogram",
 ) -> plt.Figure:
-    """Creates a spectrogram figure from a waveform."""
-    spec = torchaudio.transforms.Spectrogram(n_fft=1024, hop_length=512, power=None)(waveform)
-    mag = torch.abs(spec.squeeze())
+    fig, ax = plt.subplots(figsize=(10, 4))
 
-    # 2. Convert to dB, reference max to 0 dB, and apply -80 dB floor
-    s_db = 20 * torch.log10(torch.clamp(mag, min=1e-10))
-    s_db = s_db - s_db.max()
-    s_db = torch.clamp(s_db, min=-80)
+    # Ensure 1D array
+    if waveform.ndim > 1:
+        waveform = waveform.squeeze()
 
-    # 3. Plot using matplotlib.pyplot.imshow
-    duration = waveform.shape[-1] / sample_rate
+    # 1. Compute STFT natively in JAX
+    freqs, times, Zxx = signal.stft(
+        waveform,
+        fs=sample_rate,
+        nperseg=512,  # 32 ms window
+        noverlap=384,  # 8 ms hop
+        nfft=1024,
+    )
+
+    # 2. Magnitude and dB conversion
+    mag = jnp.abs(Zxx)
+    s_db = 20 * jnp.log10(jnp.clip(mag, a_min=1e-10))
+
+    # Reference to max and apply -80 dB floor
+    s_db = s_db - jnp.max(s_db)
+    s_db = jnp.clip(s_db, a_min=-80)
+
+    # Move to CPU for plotting to prevent Matplotlib warnings
+    s_db_np = np.asarray(s_db)
+    times_np = np.asarray(times)
+    freqs_np = np.asarray(freqs)
+
+    # 3. Plot using imshow
     img = ax.imshow(
-        s_db.numpy(),
+        s_db_np,
         aspect='auto',
         origin='lower',
         cmap='magma',
-        extent=[0, duration, 0, sample_rate / 2],
+        extent=[times_np[0], times_np[-1], freqs_np[0], freqs_np[-1]],
         vmin=-80,
         vmax=0
     )

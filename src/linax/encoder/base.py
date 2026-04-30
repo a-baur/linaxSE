@@ -18,7 +18,7 @@ class EncoderConfig(ABC):
         out_features: Output dimensionality (hidden dimension).
     """
 
-    out_features: int
+    out_channels: int
 
     @abstractmethod
     def build(self, key: PRNGKeyArray) -> Encoder:
@@ -45,10 +45,10 @@ class Encoder[ConfigType: EncoderConfig](eqx.Module, ABC):
 
     @abstractmethod
     def __init__(
-        self,
-        out_features: int,
-        cfg: ConfigType,
-        key: PRNGKeyArray,
+            self,
+            out_features: int,
+            cfg: ConfigType,
+            key: PRNGKeyArray,
     ):
         """Initialize the encoder."""
 
