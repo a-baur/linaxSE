@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import equinox as eqx
 import jax
 from jaxtyping import Array, PRNGKeyArray
 
 from linax.encoder.base import Encoder, EncoderConfig
-from linax.modules import DenseConv, DenseBlock
+from linax.modules import DenseBlock, DenseConv
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,7 @@ class DenseEncoderConfig(EncoderConfig):
     in_channels: int
     out_channels: int
     dense_layers: int
+    skip_type: Literal["residual", "dense"] = "dense"
 
     def build(self, key: PRNGKeyArray) -> DenseEncoder:
         """Build encoder from config.
@@ -58,7 +60,8 @@ class DenseEncoder[ConfigType: DenseEncoderConfig](Encoder):
             num_layers=cfg.dense_layers,
             hidden_size=cfg.out_channels,
             kernel_size=(3, 3),
-            dilation_rate=2,
+            dilation_rate=1,
+            skip_type=cfg.skip_type,
             key=block_key,
         )
         self.dense_conv_2 = DenseConv(

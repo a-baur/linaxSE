@@ -11,9 +11,9 @@ from pesq import pesq
 
 @eqx.filter_jit
 def l1_loss(
-        y: Float[Array, "batch time feature"],
-        pred_y: Float[Array, "batch time feature"],
-        mask: Int[Array, "batch time feature"],
+    y: Float[Array, "batch time feature"],
+    pred_y: Float[Array, "batch time feature"],
+    mask: Int[Array, "batch time feature"],
 ) -> Float[Array, ""]:
     l1 = jnp.sum(jnp.abs(pred_y - y) * mask) / jnp.sum(mask)
     return l1
@@ -21,9 +21,9 @@ def l1_loss(
 
 @eqx.filter_jit
 def mse_loss(
-        y: Float[Array, "batch time feature"],
-        pred_y: Float[Array, "batch time feature"],
-        mask: Int[Array, "batch time feature"],
+    y: Float[Array, "batch time feature"],
+    pred_y: Float[Array, "batch time feature"],
+    mask: Int[Array, "batch time feature"],
 ) -> Float[Array, ""]:
     mse = jnp.sum(((pred_y - y) ** 2) * mask) / jnp.sum(mask)
     return mse
@@ -31,9 +31,9 @@ def mse_loss(
 
 @eqx.filter_jit
 def spectral_mag_loss(
-        y: Float[Array, "batch time feature"],
-        pred_c_mag: Float[Array, "batch time feature"],
-        mask: Int[Array, "batch time feature"],
+    y: Float[Array, "batch time feature"],
+    pred_c_mag: Float[Array, "batch time feature"],
+    mask: Int[Array, "batch time feature"],
 ) -> Float[Array, ""]:
     spectral_mask = jax.image.resize(
         mask, shape=(mask.shape[0], pred_c_mag.shape[1], mask.shape[2]), method="nearest"
@@ -54,14 +54,13 @@ def spectral_mag_loss(
 
 @eqx.filter_jit
 def si_sdr_loss(
-        y: Float[Array, "batch time feature"],
-        pred_y: Float[Array, "batch time feature"],
-        mask: Int[Array, "batch time feature"],
-        zero_mean: bool = True,
-        invert: bool = False,
+    y: Float[Array, "batch time feature"],
+    pred_y: Float[Array, "batch time feature"],
+    mask: Int[Array, "batch time feature"],
+    zero_mean: bool = True,
+    invert: bool = False,
 ) -> Float[Array, ""]:
-    """
-    Computes Negative SI-SDR loss for a batch.
+    """Computes Negative SI-SDR loss for a batch.
 
     Args:
         pred_y: (Batch, Time, 1) Estimated audio
@@ -83,14 +82,14 @@ def si_sdr_loss(
     eps = jax.numpy.finfo(pred_y.dtype).eps
 
     alpha = (jnp.sum(pred_y * y, axis=-1, keepdims=True) + eps) / (
-            jnp.sum(y ** 2, axis=-1, keepdims=True) + eps
+        jnp.sum(y**2, axis=-1, keepdims=True) + eps
     )
     target_scaled = alpha * y
 
     noise = target_scaled - pred_y
 
-    target_pow = jnp.sum(target_scaled ** 2, axis=1) + eps
-    noise_pow = jnp.sum(noise ** 2, axis=1) + eps
+    target_pow = jnp.sum(target_scaled**2, axis=1) + eps
+    noise_pow = jnp.sum(noise**2, axis=1) + eps
     si_sdr = 10.0 * jnp.log10(target_pow / noise_pow)
 
     return jnp.mean(si_sdr) * (-1 if invert else 1)
@@ -105,9 +104,9 @@ def _pesq_pair(ref_deg: tuple[np.ndarray, np.ndarray]) -> float:
 
 
 def pesq_loss(
-        y: Float[Array, "batch time feature"],
-        pred_y: Float[Array, "batch time feature"],
-        mask: Int[Array, "batch time feature"],
+    y: Float[Array, "batch time feature"],
+    pred_y: Float[Array, "batch time feature"],
+    mask: Int[Array, "batch time feature"],
 ) -> Float[Array, ""]:
     batch_size = y.shape[0]
     end_indices = np.asarray(jnp.sum(mask[..., 0], axis=1))
@@ -115,7 +114,7 @@ def pesq_loss(
     pred_y_np = np.asarray(pred_y)
 
     pairs = [
-        (y_np[i, :end_indices[i]].squeeze(), pred_y_np[i, :end_indices[i]].squeeze())
+        (y_np[i, : end_indices[i]].squeeze(), pred_y_np[i, : end_indices[i]].squeeze())
         for i in range(batch_size)
     ]
 
@@ -134,9 +133,9 @@ def _anti_wrap(x: Array) -> Array:
 
 
 def phase_losses(
-        phase_pred: Float[Array, "batch frames bins"],
-        phase_target: Float[Array, "batch frames bins"],
-        mask: Float[Array, "batch frames 1"] | None = None,
+    phase_pred: Float[Array, "batch frames bins"],
+    phase_target: Float[Array, "batch frames bins"],
+    mask: Float[Array, "batch frames 1"] | None = None,
 ) -> tuple[Float[Array, ""], Float[Array, ""], Float[Array, ""]]:
     """Anti-wrapping phase losses (SEMamba / MP-SENet).
 
@@ -162,13 +161,13 @@ def phase_losses(
 
 @eqx.filter_jit
 def spectral_losses(
-        y: Float[Array, "batch time feature"],
-        mag_pred: Float[Array, "batch frames bins"],
-        phase_pred: Float[Array, "batch frames bins"],
-        mask: Int[Array, "batch time feature"],
-        n_fft: int = 512,
-        hop_length: int = 256,
-        win_length: int = 512,
+    y: Float[Array, "batch time feature"],
+    mag_pred: Float[Array, "batch frames bins"],
+    phase_pred: Float[Array, "batch frames bins"],
+    mask: Int[Array, "batch time feature"],
+    n_fft: int = 400,
+    hop_length: int = 100,
+    win_length: int = 400,
 ) -> tuple[Float[Array, ""], Float[Array, ""], Float[Array, ""]]:
     """Magnitude, anti-wrapping phase, and complex losses against a single
     STFT of the clean target — using the model's mag_pred / phase_pred
@@ -189,7 +188,10 @@ def spectral_losses(
 
     y_masked = (y * mask)[..., 0]
     _, _, Y = jax.scipy.signal.stft(
-        y_masked, nperseg=win_length, noverlap=win_length - hop_length, nfft=n_fft
+        y_masked,
+        nperseg=win_length,
+        noverlap=win_length - hop_length,
+        nfft=n_fft,
     )
     Y = jnp.swapaxes(Y, -1, -2)  # [batch, frames, bins]
     y_mag = jnp.abs(Y) ** p
@@ -202,8 +204,8 @@ def spectral_losses(
 
     pred_real = mag_pred * jnp.cos(phase_pred)
     pred_imag = mag_pred * jnp.sin(phase_pred)
-    Y_real = y_mag * jnp.cos(phase_pred)
-    Y_imag = y_mag * jnp.sin(phase_pred)
+    Y_real = y_mag * jnp.cos(y_phase)
+    Y_imag = y_mag * jnp.sin(y_phase)
     com_l = jnp.sum(((pred_real - Y_real) ** 2 + (pred_imag - Y_imag) ** 2) * spec_mask) / norm
 
     return mag_l, pha_l, com_l
@@ -211,12 +213,12 @@ def spectral_losses(
 
 @eqx.filter_jit
 def multi_res_stft_loss(
-        y: Float[Array, "batch time feature"],
-        pred_y: Float[Array, "batch time feature"],
-        mask: Int[Array, "batch time feature"],
-        fft_sizes: tuple[int] = (512, 1024, 2048),
-        hop_sizes: tuple[int] = (50, 120, 240),
-        win_lengths: tuple[int] = (240, 600, 1200),
+    y: Float[Array, "batch time feature"],
+    pred_y: Float[Array, "batch time feature"],
+    mask: Int[Array, "batch time feature"],
+    fft_sizes: tuple[int] = (512, 1024, 2048),
+    hop_sizes: tuple[int] = (50, 120, 240),
+    win_lengths: tuple[int] = (240, 600, 1200),
 ) -> Float[Array, ""]:
     """Compute multi-resolution spectral loss."""
     y = (y * mask)[..., 0]

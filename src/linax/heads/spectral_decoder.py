@@ -1,22 +1,30 @@
 """SEMamba-style mag/phase decoders.
 
-Each head consumes the block-stack output ``[C, T, F/2]`` and:
+Each head consumes the block-stack output ``[C, T, F_in]`` and:
 
-1. Upsamples the freq axis with a 1-D conv-transpose along F.
+1. Upsamples the freq axis using one of two strategies (``upsample_type``):
+
+   - ``resize_conv``: nearest-neighbour resize to ``target_freq`` followed by
+     a regular ``Conv2d``. Routes through cuDNN's forward-conv path with
+     well-tuned tensor-core kernels.
+   - ``transposed``: ``ConvTranspose2d(kernel, stride, padding)`` — matches
+     SEMamba's reference implementation. XLA expresses the backward weight
+     gradient as a giant-kernel forward conv, which lands on cuDNN's slower
+     algorithms.
+
 2. Applies InstanceNorm (via per-channel ``GroupNorm``) and PReLU.
 3. Collapses the channel axis with one or more 1×1 convs.
 
 The mag head adds a sigmoid to produce a bounded multiplicative mask. The
-phase head ends in two parallel 1×1 conv branches (pseudo-real and pseudo-imag)
-whose ratio is fed into ``atan2``, so the result lives in ``(-π, π]``.
-
-Default kernel/stride invert the ``DenseEncoder.dense_conv_2`` reduction
-(kernel ``(1, 3)``, stride ``(1, 2)``, padding 0).
+phase head ends in two parallel 1×1 conv branches (pseudo-real and
+pseudo-imag) whose ratio is fed into ``atan2``, so the result lives in
+``(-π, π]``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import equinox as eqx
 import jax
@@ -27,28 +35,42 @@ from jaxtyping import Array, Float, PRNGKeyArray
 from linax.heads.base import Head, HeadConfig
 from linax.modules import PReLU
 
+UpsampleType = Literal["resize_conv", "transposed"]
+
 
 def _build_upsample(
     in_channels: int,
+    upsample_type: UpsampleType,
     kernel: tuple[int, int],
     stride: tuple[int, int],
     padding: tuple[int, int],
     key: PRNGKeyArray,
-) -> tuple[eqx.nn.ConvTranspose2d, eqx.nn.GroupNorm, PReLU]:
-    """Construct the (ConvTranspose2d, InstanceNorm, PReLU) trio shared by both heads."""
-    conv = eqx.nn.ConvTranspose2d(
-        in_channels=in_channels,
-        out_channels=in_channels,
-        kernel_size=kernel,
-        stride=stride,
-        padding=padding,
-        key=key,
-    )
-    norm = eqx.nn.GroupNorm(
-        groups=in_channels, channels=in_channels, channelwise_affine=True
-    )
-    act = PReLU(in_channels)
-    return conv, norm, act
+) -> eqx.Module:
+    """Build the upsample conv for the requested strategy.
+
+    For ``resize_conv`` the spatial upsample is done outside (via
+    ``jax.image.resize`` in ``__call__``); the conv only refines the result
+    and uses freq pad of 1 with kernel ``(1, 3)`` to preserve shape.
+    For ``transposed`` the conv handles upsampling itself via stride.
+    """
+    if upsample_type == "resize_conv":
+        return eqx.nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=in_channels,
+            kernel_size=kernel,
+            padding=(0, 1),
+            key=key,
+        )
+    if upsample_type == "transposed":
+        return eqx.nn.ConvTranspose2d(
+            in_channels=in_channels,
+            out_channels=in_channels,
+            kernel_size=kernel,
+            stride=stride,
+            padding=padding,
+            key=key,
+        )
+    raise ValueError(f"unknown upsample_type: {upsample_type!r}")
 
 
 @dataclass(frozen=True)
@@ -56,18 +78,21 @@ class MagDecoderHeadConfig(HeadConfig):
     """Magnitude-mask decoder.
 
     Attributes:
-        upsample_kernel: Conv-transpose kernel along (T, F). The default
-            ``(1, 3)`` undoes the dense encoder's ``(1, 3)`` reduction.
-        upsample_stride: Conv-transpose stride along (T, F). The default
-            ``(1, 2)`` undoes the encoder's stride-2 freq reduction.
-        upsample_padding: Conv-transpose padding.
-        out_features: Required by ``HeadConfig``; ignored. The output freq dim
-            is determined by the conv-transpose, not this field.
-        reduce: Required by ``HeadConfig``; ignored.
+        upsample_type: ``resize_conv`` (NN-resize + Conv2d, fast on JAX/cuDNN)
+            or ``transposed`` (ConvTranspose2d, SEMamba-faithful).
+        target_freq: Output freq dim. Used by ``resize_conv`` to size the
+            resize. For ``transposed`` you must pick ``upsample_stride`` /
+            ``upsample_padding`` so the conv-transpose lands on this size.
+        upsample_kernel: Conv kernel along (T, F).
+        upsample_stride: ``transposed`` only.
+        upsample_padding: ``transposed`` only.
+        out_features / reduce: Required by ``HeadConfig``; ignored.
     """
 
     out_features: int = 0
     reduce: bool = False
+    upsample_type: UpsampleType = "resize_conv"
+    target_freq: int = 0
     upsample_kernel: tuple[int, int] = (1, 3)
     upsample_stride: tuple[int, int] = (1, 2)
     upsample_padding: tuple[int, int] = (0, 0)
@@ -78,25 +103,32 @@ class MagDecoderHeadConfig(HeadConfig):
 
 
 class MagDecoderHead(Head):
-    """ConvTranspose upsample → InstanceNorm → PReLU → 1×1 conv → sigmoid."""
+    """Upsample → InstanceNorm → PReLU → 1×1 conv → sigmoid."""
 
-    upsample: eqx.nn.ConvTranspose2d
+    upsample: eqx.Module
     norm: eqx.nn.GroupNorm
     activation: PReLU
     project: eqx.nn.Conv2d
+    target_freq: int = eqx.field(static=True)
+    upsample_type: UpsampleType = eqx.field(static=True)
 
-    def __init__(
-        self, in_features: int, cfg: MagDecoderHeadConfig, key: PRNGKeyArray
-    ):
+    def __init__(self, in_features: int, cfg: MagDecoderHeadConfig, key: PRNGKeyArray):
         """Initialise the magnitude decoder head."""
         u_key, p_key = jr.split(key, 2)
-        self.upsample, self.norm, self.activation = _build_upsample(
+        self.upsample_type = cfg.upsample_type
+        self.target_freq = cfg.target_freq
+        self.upsample = _build_upsample(
             in_channels=in_features,
+            upsample_type=cfg.upsample_type,
             kernel=cfg.upsample_kernel,
             stride=cfg.upsample_stride,
             padding=cfg.upsample_padding,
             key=u_key,
         )
+        self.norm = eqx.nn.GroupNorm(
+            groups=in_features, channels=in_features, channelwise_affine=True
+        )
+        self.activation = PReLU(in_features)
         self.project = eqx.nn.Conv2d(
             in_channels=in_features,
             out_channels=1,
@@ -110,12 +142,17 @@ class MagDecoderHead(Head):
         state: eqx.nn.State,
     ) -> tuple[Float[Array, "frames bins_out"], eqx.nn.State]:
         """Forward pass. Output is in ``[0, 1]`` per (frame, freq)."""
-        h = self.upsample(x)  # [C, T, F]
+        if self.upsample_type == "resize_conv":
+            c, t, _ = x.shape
+            h = jax.image.resize(x, (c, t, self.target_freq), method="nearest")
+            h = self.upsample(h)
+        else:
+            h = self.upsample(x)
         h = self.norm(h)
         h = self.activation(h)
-        h = self.project(h)  # [1, T, F]
+        h = self.project(h)
         h = jax.nn.sigmoid(h)
-        return h.squeeze(0), state  # [T, F]
+        return h.squeeze(0), state
 
 
 @dataclass(frozen=True)
@@ -129,6 +166,8 @@ class PhaseDecoderHeadConfig(HeadConfig):
 
     out_features: int = 0
     reduce: bool = False
+    upsample_type: UpsampleType = "resize_conv"
+    target_freq: int = 0
     upsample_kernel: tuple[int, int] = (1, 3)
     upsample_stride: tuple[int, int] = (1, 2)
     upsample_padding: tuple[int, int] = (0, 0)
@@ -139,26 +178,33 @@ class PhaseDecoderHeadConfig(HeadConfig):
 
 
 class PhaseDecoderHead(Head):
-    """ConvTranspose upsample → InstanceNorm → PReLU → atan2(imag, real)."""
+    """Upsample → InstanceNorm → PReLU → atan2(imag, real)."""
 
-    upsample: eqx.nn.ConvTranspose2d
+    upsample: eqx.Module
     norm: eqx.nn.GroupNorm
     activation: PReLU
     project_real: eqx.nn.Conv2d
     project_imag: eqx.nn.Conv2d
+    target_freq: int = eqx.field(static=True)
+    upsample_type: UpsampleType = eqx.field(static=True)
 
-    def __init__(
-        self, in_features: int, cfg: PhaseDecoderHeadConfig, key: PRNGKeyArray
-    ):
+    def __init__(self, in_features: int, cfg: PhaseDecoderHeadConfig, key: PRNGKeyArray):
         """Initialise the phase decoder head."""
         u_key, r_key, i_key = jr.split(key, 3)
-        self.upsample, self.norm, self.activation = _build_upsample(
+        self.upsample_type = cfg.upsample_type
+        self.target_freq = cfg.target_freq
+        self.upsample = _build_upsample(
             in_channels=in_features,
+            upsample_type=cfg.upsample_type,
             kernel=cfg.upsample_kernel,
             stride=cfg.upsample_stride,
             padding=cfg.upsample_padding,
             key=u_key,
         )
+        self.norm = eqx.nn.GroupNorm(
+            groups=in_features, channels=in_features, channelwise_affine=True
+        )
+        self.activation = PReLU(in_features)
         self.project_real = eqx.nn.Conv2d(
             in_channels=in_features,
             out_channels=1,
@@ -178,9 +224,14 @@ class PhaseDecoderHead(Head):
         state: eqx.nn.State,
     ) -> tuple[Float[Array, "frames bins_out"], eqx.nn.State]:
         """Forward pass. Output is the wrapped phase in ``(-π, π]``."""
-        h = self.upsample(x)  # [C, T, F]
+        if self.upsample_type == "resize_conv":
+            c, t, _ = x.shape
+            h = jax.image.resize(x, (c, t, self.target_freq), method="nearest")
+            h = self.upsample(h)
+        else:
+            h = self.upsample(x)
         h = self.norm(h)
         h = self.activation(h)
-        x_r = self.project_real(h).squeeze(0)  # [T, F]
-        x_i = self.project_imag(h).squeeze(0)  # [T, F]
+        x_r = self.project_real(h).squeeze(0)
+        x_i = self.project_imag(h).squeeze(0)
         return jnp.arctan2(x_i, x_r), state

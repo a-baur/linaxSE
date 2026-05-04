@@ -63,23 +63,17 @@ class TFBlock(eqx.Module):
     channel mixer, and BatchNorm — they are separate ``eqx.Module`` leaves, so
     their parameters and BN state stay disjoint.
 
-    !!! warning
-        BatchNorm uses ``axis_name="batch"``. Vmap your model with
-        ``axis_name="batch"`` over the true batch axis. The internal vmaps over
-        the per-bin / per-frame axes are intentionally unnamed — naming them
-        ``batch`` would collapse statistics across the wrong axis.
-
-        BatchNorm is applied to the full ``[C, T, F]`` tensor (statistics computed
-        per channel, reduced over the named batch axis). It is *not* placed inside
-        the per-bin/per-frame vmap — that would require merging state across
-        vmapped calls.
+    LayerNorm is applied per (frame, bin) token over the channel axis, matching
+    SEMamba's TF-Mamba block. The norm lives inside each branch and is invoked
+    after the transpose so the channel axis is last, removing the previous
+    BatchNorm dependency on ``axis_name="batch"`` and on a vmapped state.
     """
 
-    time_norm: eqx.nn.BatchNorm
+    time_norm: eqx.nn.LayerNorm
     time_sequence_mixer: SequenceMixer
     time_channel_mixer: ChannelMixer
 
-    freq_norm: eqx.nn.BatchNorm
+    freq_norm: eqx.nn.LayerNorm
     freq_sequence_mixer: SequenceMixer
     freq_channel_mixer: ChannelMixer
 
@@ -101,12 +95,8 @@ class TFBlock(eqx.Module):
         self.time_channel_mixer = time_channel_mixer
         self.freq_channel_mixer = freq_channel_mixer
 
-        self.time_norm = eqx.nn.BatchNorm(
-            input_size=in_features, axis_name="batch", channelwise_affine=False, mode="ema"
-        )
-        self.freq_norm = eqx.nn.BatchNorm(
-            input_size=in_features, axis_name="batch", channelwise_affine=False, mode="ema"
-        )
+        self.time_norm = eqx.nn.LayerNorm(shape=in_features)
+        self.freq_norm = eqx.nn.LayerNorm(shape=in_features)
         self.drop = eqx.nn.Dropout(p=cfg.drop_rate)
         self.prenorm = cfg.prenorm
 
@@ -119,8 +109,8 @@ class TFBlock(eqx.Module):
         time_key, freq_key = jr.split(key)
 
         # Time scan: [T, C] over F
-        x, state = self._branch(
-            x, state,
+        x = self._branch(
+            x,
             norm=self.time_norm,
             seq=self.time_sequence_mixer,
             chan=self.time_channel_mixer,
@@ -129,8 +119,8 @@ class TFBlock(eqx.Module):
             key=time_key,
         )
         # Freq scan: [F, C] over T
-        x, state = self._branch(
-            x, state,
+        x = self._branch(
+            x,
             norm=self.freq_norm,
             seq=self.freq_sequence_mixer,
             chan=self.freq_channel_mixer,
@@ -143,21 +133,19 @@ class TFBlock(eqx.Module):
     def _branch(
             self,
             x: Float[Array, "channels frames bins"],
-            state: eqx.nn.State,
-            norm: eqx.nn.BatchNorm,
+            norm: eqx.nn.LayerNorm,
             seq: SequenceMixer,
             chan: ChannelMixer,
             forward_perm: tuple[int, int, int],
             inverse_perm: tuple[int, int, int],
             key: PRNGKeyArray,
-    ) -> tuple[Float[Array, "channels frames bins"], eqx.nn.State]:
+    ) -> Float[Array, "channels frames bins"]:
         seq_key, drop_key1, drop_key2 = jr.split(key, 3)
 
         skip = x
+        h = jnp.transpose(x, forward_perm)  # channel axis is last
         if self.prenorm:
-            x, state = norm(x, state)
-
-        h = jnp.transpose(x, forward_perm)
+            h = jax.vmap(jax.vmap(norm))(h)
         h = jax.vmap(lambda hi: seq(hi, seq_key))(h)
         h = self.drop(jax.nn.gelu(h), key=drop_key1)
         h = jax.vmap(jax.vmap(chan))(h)
@@ -166,5 +154,7 @@ class TFBlock(eqx.Module):
 
         x = skip + h
         if not self.prenorm:
-            x, state = norm(x, state)
-        return x, state
+            h_ln = jnp.moveaxis(x, 0, -1)
+            h_ln = jax.vmap(jax.vmap(norm))(h_ln)
+            x = jnp.moveaxis(h_ln, -1, 0)
+        return x

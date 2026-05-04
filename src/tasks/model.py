@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from jaxtyping import PRNGKeyArray
 
 from linax.blocks import StandardBlockConfig, TFBlockConfig
-from linax.encoder import ConvEncoderConfig, LinearEncoderConfig, DenseEncoderConfig
+from linax.encoder import ConvEncoderConfig, DenseEncoderConfig, LinearEncoderConfig
 from linax.heads import (
     FCHeadConfig,
     MagDecoderHeadConfig,
@@ -90,16 +90,12 @@ def build_linoss_noise_cancellation(subkey: PRNGKeyArray) -> eqx.Module:
 def build_linoss_spectral(subkey: PRNGKeyArray) -> eqx.Module:
     """Load a spectral-domain LinOSS model with given configuration."""
     hidden_size = 64
-    n_fft = 512
+    n_fft = 400
     n_bins = n_fft // 2 + 1
 
     cfg = LinOSSConfig(
-        num_blocks=2,
-        encoder_config=DenseEncoderConfig(
-            in_channels=2,
-            out_channels=hidden_size,
-            dense_layers=4
-        ),
+        num_blocks=4,
+        encoder_config=DenseEncoderConfig(in_channels=2, out_channels=hidden_size, dense_layers=4),
         sequence_mixer_config=LinOSSSequenceMixerConfig(
             state_dim=hidden_size,
             discretization="IMEX",
@@ -114,8 +110,8 @@ def build_linoss_spectral(subkey: PRNGKeyArray) -> eqx.Module:
     return SpectralWrapper(
         generator=cfg.build(key=subkey),
         n_fft=n_fft,
-        hop_length=256,  # 16 ms
-        win_length=512,  # 32 ms
+        hop_length=100,
+        win_length=400,
     )
 
 
@@ -127,14 +123,16 @@ def build_se_linoss(subkey: PRNGKeyArray) -> eqx.Module:
     channels. Wrapped in a ``SpectralWrapper`` for end-to-end waveform IO.
     """
     hidden_size = 64
-    n_fft = 512
+    n_fft = 400
+    n_bins = n_fft // 2 + 1
 
     cfg = SELinOSSConfig(
         num_blocks=2,
         encoder_config=DenseEncoderConfig(
             in_channels=2,
             out_channels=hidden_size,
-            dense_layers=4,
+            dense_layers=2,
+            skip_type="residual",  # lighter load for testing
         ),
         sequence_mixer_config=LinOSSSequenceMixerConfig(
             state_dim=hidden_size,
@@ -144,13 +142,19 @@ def build_se_linoss(subkey: PRNGKeyArray) -> eqx.Module:
             theta_max=jnp.pi,
         ),
         block_config=TFBlockConfig(drop_rate=0.1, prenorm=True),
-        mag_decoder_config=MagDecoderHeadConfig(),
-        phase_decoder_config=PhaseDecoderHeadConfig(),
+        mag_decoder_config=MagDecoderHeadConfig(
+            target_freq=n_bins,
+            upsample_type="transposed",
+        ),
+        phase_decoder_config=PhaseDecoderHeadConfig(
+            target_freq=n_bins,
+            upsample_type="transposed",
+        ),
     )
 
     return SpectralWrapper(
         generator=cfg.build(key=subkey),
         n_fft=n_fft,
-        hop_length=256,  # 16 ms
-        win_length=512,  # 32 ms
+        hop_length=100,  # 16 ms
+        win_length=400,  # 32 ms
     )

@@ -24,12 +24,12 @@ class SpectralWrapper(eqx.Module):
     win_length: int = eqx.field(static=True)
 
     def __init__(
-            self,
-            generator: SSM,
-            n_fft: int = 512,
-            hop_length: int = 256,
-            win_length: int = 512,
-            inference: bool = False,
+        self,
+        generator: SSM,
+        n_fft: int = 400,
+        hop_length: int = 100,
+        win_length: int = 400,
+        inference: bool = False,
     ):
         self.generator = generator
         self.n_fft = n_fft
@@ -38,7 +38,7 @@ class SpectralWrapper(eqx.Module):
         self.inference = inference
 
     def __call__(
-            self, x: Float[jax.Array, "time bins"], state: eqx.nn.State, key: PRNGKeyArray
+        self, x: Float[jax.Array, "time bins"], state: eqx.nn.State, key: PRNGKeyArray
     ) -> tuple[ModelOutput, eqx.nn.State]:
         """Forward pass of Spectral Wrapper."""
         original_length = x.shape[0]
@@ -57,7 +57,7 @@ class SpectralWrapper(eqx.Module):
         phase = jnp.angle(Zxx)
 
         # Compressed magnitude as network input.
-        mag_c = mag ** p
+        mag_c = mag**p
         in_features = jnp.stack([mag_c, phase], axis=0)  # [2, frames, bins]
 
         out, new_state = self.generator(in_features, state, key)

@@ -1,5 +1,7 @@
 """Common modules for all models."""
 
+from typing import Literal
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -8,7 +10,7 @@ from jaxtyping import PRNGKeyArray
 
 
 def get_padding(kernel_size, dilation=1):
-    """ Calculate the padding size for a convolutional layer.
+    """Calculate the padding size for a convolutional layer.
 
     Args:
     - kernel_size (int): Size of the convolutional kernel.
@@ -21,7 +23,7 @@ def get_padding(kernel_size, dilation=1):
 
 
 def get_padding_2d(kernel_size, dilation=(1, 1)):
-    """ Calculate the padding size for a 2D convolutional layer.
+    """Calculate the padding size for a 2D convolutional layer.
 
     Args:
     - kernel_size (tuple): Size of the convolutional kernel (height, width).
@@ -30,18 +32,19 @@ def get_padding_2d(kernel_size, dilation=(1, 1)):
     Returns:
     - tuple: Calculated padding size (height, width).
     """
-    return (int((kernel_size[0] * dilation[0] - dilation[0]) / 2),
-            int((kernel_size[1] * dilation[1] - dilation[1]) / 2))
+    return (
+        int((kernel_size[0] * dilation[0] - dilation[0]) / 2),
+        int((kernel_size[1] * dilation[1] - dilation[1]) / 2),
+    )
 
 
 class PReLU(eqx.Module):
     weight: jax.Array
 
     def __init__(self, num_parameters: int = 1, init: float = 0.25):
-        """
-        Args:
-            num_parameters: 1 for a single shared slope, or `channels` for channel-wise.
-            init: Initial value for the negative slope.
+        """Args:
+        num_parameters: 1 for a single shared slope, or `channels` for channel-wise.
+        init: Initial value for the negative slope.
         """
         self.weight = jnp.full((num_parameters,), init)
 
@@ -63,15 +66,15 @@ class DenseConv(eqx.Module):
     activation: eqx.Module
 
     def __init__(
-            self,
-            in_channels: int,
-            out_channels: int,
-            kernel_size: tuple,
-            dilation: tuple = (1, 1),
-            padding: tuple = (0, 0),
-            stride: tuple = (1, 1),
-            *,
-            key: PRNGKeyArray,
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: tuple,
+        dilation: tuple = (1, 1),
+        padding: tuple = (0, 0),
+        stride: tuple = (1, 1),
+        *,
+        key: PRNGKeyArray,
     ) -> None:
         self.conv = nn.Conv2d(
             in_channels=in_channels,
@@ -97,41 +100,56 @@ class DenseConv(eqx.Module):
 
 
 class DenseBlock(eqx.Module):
+    """Stack of dilated convs with residual connections.
+
+    Each layer is a dilated conv with the same in/out channel count; its
+    output is added to the running activation. Originally a DenseNet-style
+    block (channels grew via concatenation), but the dense connections
+    multiplied activation memory and made the deepest conv bandwidth-bound.
+    """
+
     num_layers: int
     hidden_size: int
     dense_layers: list
+    skip_type: Literal["residual", "dense"]
 
     def __init__(
-            self,
-            num_layers: int,
-            hidden_size: int,
-            kernel_size: tuple = (3, 3),
-            dilation_rate: int = 2,
-            *,
-            key: PRNGKeyArray,
+        self,
+        num_layers: int,
+        hidden_size: int,
+        kernel_size: tuple = (3, 3),
+        dilation_rate: int = 2,
+        skip_type: Literal["residual", "dense"] = "dense",
+        *,
+        key: PRNGKeyArray,
     ) -> None:
         self.num_layers = num_layers
         self.hidden_size = hidden_size
+        self.skip_type = skip_type
         self.dense_layers = []
 
         keys = jax.random.split(key, num_layers)
 
         for i in range(num_layers):
-            d = dilation_rate ** i
+            d = dilation_rate**i
             self.dense_layers.append(
                 DenseConv(
-                    in_channels=hidden_size * (i + 1),
+                    in_channels=hidden_size,
                     out_channels=hidden_size,
                     kernel_size=kernel_size,
                     dilation=(d, 1),
                     stride=(1, 1),
                     padding=get_padding_2d(kernel_size, (d, 1)),
                     key=keys[i],
-                ))
+                )
+            )
 
     def __call__(self, x: jax.Array) -> jax.Array:
         skip = x
         for layer in self.dense_layers:
-            x = layer(skip)
-            skip = jnp.concatenate([x, skip], axis=0)
+            if self.skip_type == "residual":
+                x = skip + layer(x)
+            elif self.skip_type == "dense":
+                x = layer(skip)
+                skip = jnp.concatenate((x, skip), axis=0)
         return x

@@ -29,10 +29,10 @@ from tasks.loss import (
 
 @eqx.filter_jit
 def infer(
-        model: SSM,
-        x: Float[Array, "batch time feature"],
-        state: eqx.nn.State,
-        key: PRNGKeyArray,
+    model: SSM,
+    x: Float[Array, "batch time feature"],
+    state: eqx.nn.State,
+    key: PRNGKeyArray,
 ) -> tuple[ModelOutput, eqx.nn.State]:
     batch_keys = jax.random.split(key, x.shape[0])
     output, model_state = jax.vmap(
@@ -46,12 +46,12 @@ def infer(
 
 @eqx.filter_jit
 def spectral_train_loss(
-        model: SSM,
-        x: Float[Array, "batch time feature"],
-        y: Float[Array, "batch time feature"],
-        mask: Int[Array, "batch time feature"],
-        state: eqx.nn.State,
-        key: PRNGKeyArray,
+    model: SSM,
+    x: Float[Array, "batch time feature"],
+    y: Float[Array, "batch time feature"],
+    mask: Int[Array, "batch time feature"],
+    state: eqx.nn.State,
+    key: PRNGKeyArray,
 ) -> tuple[Float[Array, ""], eqx.nn.State]:
     """Infer and compute MSE loss in single function call for training efficiency."""
     output, model_state = infer(model, x, state, key)
@@ -61,12 +61,12 @@ def spectral_train_loss(
 
 @eqx.filter_jit
 def train_loss(
-        model: SSM,
-        x: Float[Array, "batch time feature"],
-        y: Float[Array, "batch time feature"],
-        mask: Int[Array, "batch time feature"],
-        state: eqx.nn.State,
-        key: PRNGKeyArray,
+    model: SSM,
+    x: Float[Array, "batch time feature"],
+    y: Float[Array, "batch time feature"],
+    mask: Int[Array, "batch time feature"],
+    state: eqx.nn.State,
+    key: PRNGKeyArray,
 ) -> tuple[Float[Array, ""], eqx.nn.State]:
     """Combined SEMamba-style training loss.
 
@@ -147,9 +147,9 @@ class TrainState(eqx.Module):
         return [EvalMetric(name, jnp.array(vals)) for name, vals in losses.items()]
 
     def create_samples(
-            self,
-            test_loader: DataLoader,
-            num_samples: int = 5,
+        self,
+        test_loader: DataLoader,
+        num_samples: int = 5,
     ) -> tuple[
         Float[Array, "batch time feature"],
         Float[Array, "batch time feature"],
@@ -181,12 +181,17 @@ class TrainConfig:
     adam_beta2: float = 0.999
     lr_decay: float = 0.99
     log_interval: int = 50
-    eval_interval: int = 200
+    eval_interval: int = 1000
     save_interval: int = 1000
     num_audio_samples: int = 5
     ckpt_dir: str = "checkpoints"
     log_dir: str = "logs"
     resume_from_last_chkpt: bool = False
+    # Trace ``profile_steps`` steps starting at ``profile_start_step`` (after
+    # JIT warmup) into ``profile_dir``. Set ``profile_dir`` to None to disable.
+    profile_dir: str | None = None
+    profile_start_step: int = 3
+    profile_steps: int = 20
 
     def __post_init__(self):
         os.makedirs(self.ckpt_dir, exist_ok=True)
@@ -290,7 +295,7 @@ def prompt_device_precheck():
 
 
 def load_for_inference(
-        model: eqx.Module, state: eqx.nn.State, key: PRNGKeyArray, ckpt_path: str
+    model: eqx.Module, state: eqx.nn.State, key: PRNGKeyArray, ckpt_path: str
 ) -> tuple[eqx.Module, eqx.nn.State]:
     """Loads a checkpoint and prepares the model for inference."""
     # Dummy optimizer and opt_state to create the TrainState skeleton
@@ -306,7 +311,13 @@ def load_for_inference(
     return inference_model, ts_loaded.model_state
 
 
-def print_model_summary(model: eqx.Module):
+def apply_model(dyn_m, stat_m, inputs, state, key):
+    # Recombine the model before passing data through it
+    m = eqx.combine(dyn_m, stat_m)
+    return m(inputs, state, key)
+
+
+def print_model_summary(model: eqx.Module, with_costs: bool = False):
     """Prints a concise overview of an Equinox model."""
     trainable, static = eqx.partition(model, eqx.is_inexact_array)
 
@@ -315,11 +326,43 @@ def print_model_summary(model: eqx.Module):
 
     total_params = sum(x.size for x in arrays)
     trainable_params = sum(x.size for x in jax.tree_util.tree_leaves(trainable) if x is not None)
-    total_size_mb = sum(x.nbytes for x in arrays) / (1024 ** 2)
+    total_size_mb = sum(x.nbytes for x in arrays) / (1024**2)
 
     print(f"\n{' Model Overview ':=^35}")
     print(f"Total Parameters:     {total_params:,}")
     print(f"Trainable Params:     {trainable_params:,}")
     print(f"Non-trainable Params: {total_params - trainable_params:,}")
     print(f"Model Size:           {total_size_mb:.2f} MB")
+    print(f"{'=' * 35}\n")
+
+    if with_costs:
+        print_cost_summary(model)
+
+
+def print_cost_summary(model):
+    x = jnp.ones((16000,))
+    key = jax.random.PRNGKey(0)
+    state = eqx.nn.State(model=model)
+
+    dynamic_model, static_model = eqx.partition(model, eqx.is_array)
+    lowered_model = jax.jit(apply_model, static_argnums=1).lower(
+        dynamic_model, static_model, x, state, key
+    )
+    compiled_model = lowered_model.compile()
+    costs = compiled_model.cost_analysis()
+
+    print(f"\n{' Model Costs ':=^35}")
+
+    if "flops" in costs:
+        gflops = costs["flops"] / 1e9
+        print(f"Compute:       {gflops:.3f} GFLOPs")
+
+    if "transcendentals" in costs:
+        m_trans = costs["transcendentals"] / 1e6
+        print(f"Complex Ops:   {m_trans:.3f} Million")
+
+    if "bytes accessed" in costs:
+        mb_accessed = costs["bytes accessed"] / (1024**2)
+        print(f"Total Memory:  {mb_accessed:.2f} MB")
+
     print(f"{'=' * 35}\n")
