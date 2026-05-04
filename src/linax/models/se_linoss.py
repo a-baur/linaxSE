@@ -14,6 +14,7 @@ from linax.blocks.tf import TFBlock, TFBlockConfig
 from linax.channel_mixers.glu import GLUConfig
 from linax.encoder.base import Encoder, EncoderConfig
 from linax.heads.base import Head, HeadConfig
+from linax.sequence_mixers.base import SequenceMixerConfig
 from linax.sequence_mixers.linoss import LinOSSSequenceMixerConfig
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ class SELinOSSConfig:
     encoder_config: EncoderConfig
     mag_decoder_config: HeadConfig
     phase_decoder_config: HeadConfig
-    sequence_mixer_config: LinOSSSequenceMixerConfig = field(
+    sequence_mixer_config: SequenceMixerConfig = field(
         default_factory=LinOSSSequenceMixerConfig
     )
     block_config: TFBlockConfig = field(default_factory=TFBlockConfig)
@@ -106,7 +107,7 @@ class SELinOSS(eqx.Module):
     def _build_block(
         cfg: SELinOSSConfig, hidden_dim: int, key: PRNGKeyArray
     ) -> TFBlock:
-        ts_key, fs_key, tc_key, fc_key, b_key = jr.split(key, 5)
+        ts_key, fs_key, b_key = jr.split(key, 3)
         return cfg.block_config.build(
             in_features=hidden_dim,
             time_sequence_mixer=cfg.sequence_mixer_config.build(
@@ -114,12 +115,6 @@ class SELinOSS(eqx.Module):
             ),
             freq_sequence_mixer=cfg.sequence_mixer_config.build(
                 in_features=hidden_dim, key=fs_key
-            ),
-            time_channel_mixer=cfg.channel_mixer_config.build(
-                in_features=hidden_dim, out_features=None, key=tc_key
-            ),
-            freq_channel_mixer=cfg.channel_mixer_config.build(
-                in_features=hidden_dim, out_features=None, key=fc_key
             ),
             key=b_key,
         )

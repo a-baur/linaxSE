@@ -60,7 +60,7 @@ class DenseEncoder[ConfigType: DenseEncoderConfig](Encoder):
             num_layers=cfg.dense_layers,
             hidden_size=cfg.out_channels,
             kernel_size=(3, 3),
-            dilation_rate=1,
+            dilation_rate=2,
             skip_type=cfg.skip_type,
             key=block_key,
         )

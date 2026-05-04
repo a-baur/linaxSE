@@ -12,7 +12,10 @@ from linax.heads import (
 )
 from linax.models.linoss import LinOSSConfig
 from linax.models.se_linoss import SELinOSSConfig
-from linax.sequence_mixers import LinOSSSequenceMixerConfig
+from linax.sequence_mixers import (
+    LinOSSSequenceMixerConfig,
+    MambaStyleLinOSSSequenceMixerConfig,
+)
 from linax.wrappers import NoiseCancellationWrapper, SpectralWrapper
 
 __all__ = [
@@ -122,7 +125,6 @@ def build_se_linoss(subkey: PRNGKeyArray) -> eqx.Module:
     per block) → mag/phase decoders that upsample the freq axis and collapse
     channels. Wrapped in a ``SpectralWrapper`` for end-to-end waveform IO.
     """
-    hidden_size = 64
     n_fft = 400
     n_bins = n_fft // 2 + 1
 
@@ -130,23 +132,31 @@ def build_se_linoss(subkey: PRNGKeyArray) -> eqx.Module:
         num_blocks=2,
         encoder_config=DenseEncoderConfig(
             in_channels=2,
-            out_channels=hidden_size,
-            dense_layers=2,
-            skip_type="residual",  # lighter load for testing
+            out_channels=64,
+            dense_layers=1,
+            skip_type="residual",
         ),
-        sequence_mixer_config=LinOSSSequenceMixerConfig(
-            state_dim=hidden_size,
+        sequence_mixer_config=MambaStyleLinOSSSequenceMixerConfig(
+            state_dim=16,
+            expand=2,
+            d_conv=4,
+            causal_conv=True,
             discretization="IMEX",
             damping=True,
             r_min=0.9,
             theta_max=jnp.pi,
         ),
-        block_config=TFBlockConfig(drop_rate=0.1, prenorm=True),
+        block_config=TFBlockConfig(),
         mag_decoder_config=MagDecoderHeadConfig(
+            dense_layers=1,
+            dense_skip_type="residual",
             target_freq=n_bins,
             upsample_type="transposed",
+            beta=2,
         ),
         phase_decoder_config=PhaseDecoderHeadConfig(
+            dense_layers=1,
+            dense_skip_type="residual",
             target_freq=n_bins,
             upsample_type="transposed",
         ),

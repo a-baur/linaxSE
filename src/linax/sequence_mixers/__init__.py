@@ -12,6 +12,10 @@ from linax.sequence_mixers.linoss import (
     LinOSSSequenceMixer,
     LinOSSSequenceMixerConfig,
 )
+from linax.sequence_mixers.mamba_style_linoss import (
+    MambaStyleLinOSSSequenceMixer,
+    MambaStyleLinOSSSequenceMixerConfig,
+)
 from linax.sequence_mixers.lru import (
     LRUSequenceMixer,
     LRUSequenceMixerConfig,
@@ -32,6 +36,8 @@ __all__ = [
     "IdentitySequenceMixerConfig",
     "LinOSSSequenceMixer",
     "LinOSSSequenceMixerConfig",
+    "MambaStyleLinOSSSequenceMixer",
+    "MambaStyleLinOSSSequenceMixerConfig",
     "LRUSequenceMixer",
     "LRUSequenceMixerConfig",
     "S4DSequenceMixer",

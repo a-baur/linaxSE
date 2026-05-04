@@ -1,7 +1,7 @@
 import logging
 import os
 
-logging.basicConfig(level=logging.INFO)
+logging.getLogger("jax").setLevel(logging.WARNING)
 
 from datetime import datetime
 
@@ -168,7 +168,7 @@ if __name__ == "__main__":
         lr_decay=0.99,
         log_interval=20,
         num_audio_samples=15,
-        eval_interval=1000,
+        eval_interval=500,
         save_interval=5000,
         ckpt_dir="ckpts/latest",
         log_dir="runs/latest",

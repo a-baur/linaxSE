@@ -60,6 +60,28 @@ class PReLU(eqx.Module):
         return jnp.where(x >= 0, x, weight * x)
 
 
+class LearnableSigmoid2d(eqx.Module):
+    """SEMamba-style learnable-slope sigmoid: ``beta * sigmoid(slope * x)``.
+
+    ``slope`` is a learnable per-feature vector initialised to ones; ``beta``
+    is a fixed scalar hyperparameter. SEMamba parameterises the slope by the
+    frequency dim with shape ``(F, 1)`` over a ``(B, F, T)`` input; the linax
+    decoders carry ``(C, T, F)`` so we store the slope as ``(F,)`` and let it
+    broadcast across the channel and time axes — semantically the same
+    per-frequency learnable slope.
+    """
+
+    slope: jax.Array
+    beta: float = eqx.field(static=True)
+
+    def __init__(self, in_features: int, beta: float = 1.0):
+        self.slope = jnp.ones((in_features,))
+        self.beta = beta
+
+    def __call__(self, x: jax.Array) -> jax.Array:
+        return self.beta * jax.nn.sigmoid(self.slope * x)
+
+
 class DenseConv(eqx.Module):
     conv: nn.Conv2d
     instance_norm: nn.GroupNorm
@@ -132,9 +154,13 @@ class DenseBlock(eqx.Module):
 
         for i in range(num_layers):
             d = dilation_rate**i
+            # Dense (concat) skip grows the running buffer to (i+1)*hidden along
+            # the channel axis on iter i, so each conv must accept the wider
+            # input. Residual skip keeps the channel count fixed at hidden.
+            in_ch = hidden_size * (i + 1) if skip_type == "dense" else hidden_size
             self.dense_layers.append(
                 DenseConv(
-                    in_channels=hidden_size,
+                    in_channels=in_ch,
                     out_channels=hidden_size,
                     kernel_size=kernel_size,
                     dilation=(d, 1),
@@ -153,3 +179,35 @@ class DenseBlock(eqx.Module):
                 x = layer(skip)
                 skip = jnp.concatenate((x, skip), axis=0)
         return x
+
+
+class FANLayer(eqx.Module):
+    """Fourier Analysis Network."""
+
+    in_features: int
+    out_features: int
+
+    W_p: jax.Array
+    W_p_bar: jax.Array
+    B_p_bar: jax.Array
+
+    def __init__(self, in_features: int, out_features: int, key: PRNGKeyArray) -> None:
+        self.in_features = in_features
+        self.out_features = out_features
+
+        d_p = out_features // 4
+        d_p_bar = out_features - 2 * d_p
+
+        k1, k2 = jax.random.split(key, 2)
+        initializer = jax.nn.initializers.glorot_uniform()
+        self.W_p = initializer(k1, (in_features, d_p), jnp.float32)
+        self.W_p_bar = initializer(k2, (in_features, d_p_bar), jnp.float32)
+        self.B_p_bar = jnp.zeros((d_p_bar,), dtype=jnp.float32)
+
+    def __call__(self, x: jax.Array) -> jax.Array:
+        cos_term = jnp.cos(x @ self.W_p)
+        sin_term = jnp.sin(x @ self.W_p)
+        lin_term = jax.nn.gelu((x @ self.W_p_bar) + self.B_p_bar)
+
+        output = jnp.concatenate((cos_term, sin_term, lin_term), axis=-1)
+        return output
