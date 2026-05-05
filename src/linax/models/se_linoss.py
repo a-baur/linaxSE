@@ -25,13 +25,13 @@ class SELinOSSConfig:
     """Configuration for SE-LinOSS.
 
     The model encodes the noisy STFT into ``[C, T, F/2]``, processes it through
-    ``num_blocks`` TF blocks (each with separate time and frequency LinOSS scans
-    that do not share parameters or state), then decodes the magnitude mask and
-    phase via two independent heads.
+    ``num_blocks`` TF blocks (each with bidirectional time and frequency LinOSS
+    scans — four independent SSMs per block, no parameter sharing), then
+    decodes the magnitude mask and phase via two independent heads.
 
     The shared ``sequence_mixer_config`` and ``channel_mixer_config`` define the
     *shape* of the time and frequency mixers; each TF block instantiates them
-    twice with independent keys, so parameters are not tied across directions.
+    four times (time-fwd, time-bwd, freq-fwd, freq-bwd) with independent keys.
 
     Attributes:
         num_blocks: Number of stacked TF blocks.
@@ -107,14 +107,20 @@ class SELinOSS(eqx.Module):
     def _build_block(
         cfg: SELinOSSConfig, hidden_dim: int, key: PRNGKeyArray
     ) -> TFBlock:
-        ts_key, fs_key, b_key = jr.split(key, 3)
+        tf_key, tb_key, ff_key, fb_key, b_key = jr.split(key, 5)
         return cfg.block_config.build(
             in_features=hidden_dim,
-            time_sequence_mixer=cfg.sequence_mixer_config.build(
-                in_features=hidden_dim, key=ts_key
+            time_sequence_mixer_fwd=cfg.sequence_mixer_config.build(
+                in_features=hidden_dim, key=tf_key
             ),
-            freq_sequence_mixer=cfg.sequence_mixer_config.build(
-                in_features=hidden_dim, key=fs_key
+            time_sequence_mixer_bwd=cfg.sequence_mixer_config.build(
+                in_features=hidden_dim, key=tb_key
+            ),
+            freq_sequence_mixer_fwd=cfg.sequence_mixer_config.build(
+                in_features=hidden_dim, key=ff_key
+            ),
+            freq_sequence_mixer_bwd=cfg.sequence_mixer_config.build(
+                in_features=hidden_dim, key=fb_key
             ),
             key=b_key,
         )

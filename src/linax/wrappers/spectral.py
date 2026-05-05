@@ -49,6 +49,7 @@ class SpectralWrapper(eqx.Module):
             nperseg=self.win_length,
             noverlap=self.win_length - self.hop_length,
             nfft=self.n_fft,
+            boundary="even",
         )
 
         Zxx = Zxx.T  # [frames, bins]

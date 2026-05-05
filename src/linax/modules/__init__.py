@@ -60,6 +60,26 @@ class PReLU(eqx.Module):
         return jnp.where(x >= 0, x, weight * x)
 
 
+class RMSNorm(eqx.Module):
+    """Root-mean-square LayerNorm: ``y = x / sqrt(mean(x**2) + eps) * weight``.
+
+    Per-feature learnable gain, no mean subtraction, no bias — matches the
+    ``mamba_ssm.ops.triton.layernorm.RMSNorm`` used by SEMamba's ``Block``
+    (with ``norm_epsilon=1e-5`` per the SEMamba_advanced YAML).
+    """
+
+    weight: jax.Array
+    eps: float = eqx.field(static=True)
+
+    def __init__(self, shape: int, eps: float = 1e-5):
+        self.weight = jnp.ones((shape,))
+        self.eps = eps
+
+    def __call__(self, x: jax.Array) -> jax.Array:
+        rms = jnp.sqrt(jnp.mean(x * x, axis=-1, keepdims=True) + self.eps)
+        return x / rms * self.weight
+
+
 class LearnableSigmoid2d(eqx.Module):
     """SEMamba-style learnable-slope sigmoid: ``beta * sigmoid(slope * x)``.
 

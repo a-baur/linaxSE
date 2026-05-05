@@ -98,7 +98,9 @@ class MambaStyleLinOSSSequenceMixer(SequenceMixer):
         self.d_conv = cfg.d_conv
         self.causal_conv = cfg.causal_conv
 
-        self.in_proj = eqx.nn.Linear(in_features, 2 * inner_dim, key=in_key)
+        self.in_proj = eqx.nn.Linear(
+            in_features, 2 * inner_dim, use_bias=False, key=in_key
+        )
 
         self.conv = eqx.nn.Conv1d(
             in_channels=inner_dim,
@@ -118,7 +120,9 @@ class MambaStyleLinOSSSequenceMixer(SequenceMixer):
         )
         self.ssm = LinOSSSequenceMixer(inner_dim, cfg, key)
 
-        self.out_proj = eqx.nn.Linear(inner_dim, in_features, key=out_key)
+        self.out_proj = eqx.nn.Linear(
+            inner_dim, in_features, use_bias=False, key=out_key
+        )
 
     def __call__(self, x: Array, key: PRNGKeyArray) -> Array:
         """Forward. ``x`` is ``(T, in_features)``; returns ``(T, in_features)``."""

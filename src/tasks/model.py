@@ -121,24 +121,25 @@ def build_linoss_spectral(subkey: PRNGKeyArray) -> eqx.Module:
 def build_se_linoss(subkey: PRNGKeyArray) -> eqx.Module:
     """Load an SE-LinOSS (SEMamba-style time/freq LinOSS) model.
 
-    Dense encoder → stack of TF blocks (separate time and freq LinOSS scans
-    per block) → mag/phase decoders that upsample the freq axis and collapse
-    channels. Wrapped in a ``SpectralWrapper`` for end-to-end waveform IO.
+    Dense encoder → stack of TF blocks (bidirectional time and freq LinOSS
+    scans per block, 4 independent SSMs) → mag/phase decoders that upsample
+    the freq axis and collapse channels. Wrapped in a ``SpectralWrapper`` for
+    end-to-end waveform IO.
     """
     n_fft = 400
     n_bins = n_fft // 2 + 1
 
     cfg = SELinOSSConfig(
-        num_blocks=2,
+        num_blocks=4,
         encoder_config=DenseEncoderConfig(
             in_channels=2,
-            out_channels=32,
-            dense_layers=2,
+            out_channels=64,
+            dense_layers=4,
             skip_type="residual",
         ),
         sequence_mixer_config=MambaStyleLinOSSSequenceMixerConfig(
-            state_dim=32,
-            expand=2,
+            state_dim=16,
+            expand=4,
             d_conv=4,
             causal_conv=True,
             discretization="IMEX",
@@ -148,15 +149,15 @@ def build_se_linoss(subkey: PRNGKeyArray) -> eqx.Module:
         ),
         block_config=TFBlockConfig(),
         mag_decoder_config=MagDecoderHeadConfig(
-            dense_layers=1,
-            dense_skip_type="residual",
+            dense_layers=4,
+            dense_skip_type="dense",
             target_freq=n_bins,
             upsample_type="transposed",
             beta=2,
         ),
         phase_decoder_config=PhaseDecoderHeadConfig(
-            dense_layers=1,
-            dense_skip_type="residual",
+            dense_layers=4,
+            dense_skip_type="dense",
             target_freq=n_bins,
             upsample_type="transposed",
         ),

@@ -110,13 +110,18 @@ class MagDecoderHeadConfig(HeadConfig):
 
 
 class MagDecoderHead(Head):
-    """Upsample → InstanceNorm → PReLU → 1×1 conv → LearnableSigmoid2d."""
+    """Upsample → 1×1 conv (collapse) → InstanceNorm → PReLU → 1×1 conv → LearnableSigmoid2d.
+
+    Mirrors SEMamba's ``MagDecoder.mask_conv``: the channel collapse from
+    ``hid_feature → 1`` happens *before* the InstanceNorm/PReLU, so both
+    operate on a single-channel mask, followed by a second 1×1 conv.
+    """
 
     dense_block: DenseBlock
     upsample: eqx.Module
+    conv1: eqx.nn.Conv2d
     norm: eqx.nn.GroupNorm
     activation: PReLU
-    conv1: eqx.nn.Conv2d
     conv2: eqx.nn.Conv2d
     lsigmoid: LearnableSigmoid2d
     target_freq: int = eqx.field(static=True)
@@ -148,12 +153,10 @@ class MagDecoderHead(Head):
             kernel_size=(1, 1),
             key=p1_key,
         )
-        self.norm = eqx.nn.GroupNorm(
-            groups=in_features, channels=in_features, channelwise_affine=True
-        )
-        self.activation = PReLU(in_features)
+        self.norm = eqx.nn.GroupNorm(groups=1, channels=1, channelwise_affine=True)
+        self.activation = PReLU(1)
         self.conv2 = eqx.nn.Conv2d(
-            in_channels=in_features,
+            in_channels=1,
             out_channels=1,
             kernel_size=(1, 1),
             key=p2_key,
@@ -173,7 +176,7 @@ class MagDecoderHead(Head):
             h = self.upsample(h)
         else:
             h = self.upsample(h)
-        # h = self.conv1(h)
+        h = self.conv1(h)
         h = self.norm(h)
         h = self.activation(h)
         h = self.conv2(h)

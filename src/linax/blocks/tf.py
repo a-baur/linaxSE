@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Float, PRNGKeyArray
 
+from linax.modules import RMSNorm
 from linax.sequence_mixers.base import SequenceMixer
 
 
@@ -26,72 +27,87 @@ class TFBlockConfig:
     def build(
         self,
         in_features: int,
-        time_sequence_mixer: SequenceMixer,
-        freq_sequence_mixer: SequenceMixer,
+        time_sequence_mixer_fwd: SequenceMixer,
+        time_sequence_mixer_bwd: SequenceMixer,
+        freq_sequence_mixer_fwd: SequenceMixer,
+        freq_sequence_mixer_bwd: SequenceMixer,
         key: PRNGKeyArray,
     ) -> TFBlock:
         """Build a TFBlock from this config.
 
-        The caller supplies *two* sequence mixers — one per direction. They
-        are kept as independent sub-modules so their parameters do not mix.
+        The caller supplies *four* sequence mixers — one per (branch, scan
+        direction). They are kept as independent sub-modules so their
+        parameters do not mix.
         """
         return TFBlock(
             in_features=in_features,
-            time_sequence_mixer=time_sequence_mixer,
-            freq_sequence_mixer=freq_sequence_mixer,
+            time_sequence_mixer_fwd=time_sequence_mixer_fwd,
+            time_sequence_mixer_bwd=time_sequence_mixer_bwd,
+            freq_sequence_mixer_fwd=freq_sequence_mixer_fwd,
+            freq_sequence_mixer_bwd=freq_sequence_mixer_bwd,
             key=key,
         )
 
 
 class TFBlock(eqx.Module):
-    """Time-Frequency block mirroring SEMamba's ``TFMambaBlock`` (unidirectional).
+    """Time-Frequency block mirroring SEMamba's ``TFMambaBlock`` (bidirectional).
 
     For each branch (time, then freq) the wrapper does:
 
     1. transpose so the channel axis is last;
-    2. ``LayerNorm`` over channels (per (F, T) token) — supplies the pre-norm
-       that mamba-ssm's ``Block`` provides for free in SEMamba;
-    3. apply the sequence mixer along the seq axis (vmapped over the other);
-    4. add back the pre-norm input — the inner residual that ``Block``'s
-       residual stream produces in the SEMamba reference;
-    5. apply a per-token ``Linear(C → C)`` — the analog of SEMamba's
-       ``tlinear``/``flinear`` (``ConvTranspose1d(2C → C, 1, 1)``); with the
-       unidirectional scan there's no ``2C`` to collapse, so the projection
-       degenerates to a learnable C→C mix;
-    6. transpose back and add the outer residual.
+    2. run the SSM in two independent directions:
 
-    Compared to SEMamba's ``TFMambaBlock`` the only structural difference is
-    the unidirectional scan: SEMamba runs the SSM forward and on the flipped
-    sequence, then concatenates the outputs along channels (giving ``2C``)
-    before the linear projection. Here the SSM runs once, and the projection
-    is ``C → C``.
+       - forward: ``RMSNorm → SSM → +input`` (inner residual);
+       - backward: flip the seq axis, ``RMSNorm → SSM → +flipped_input``
+         (inner residual), then flip back.
+
+       Each direction has its own ``RMSNorm`` and its own SSM; parameters
+       are not shared (matches SEMamba's ``MambaBlock`` which holds two
+       independent ``Block``\\s).
+
+    3. concatenate the two direction outputs along the channel axis,
+       giving ``2C``;
+    4. apply a per-token ``Linear(2C → C)`` — the analog of SEMamba's
+       ``tlinear``/``flinear`` (``ConvTranspose1d(2C, C, kernel=1, stride=1)``,
+       which is structurally just a per-token affine);
+    5. transpose back and add the outer residual.
     """
 
-    time_norm: eqx.nn.LayerNorm
-    time_sequence_mixer: SequenceMixer
+    time_norm_fwd: RMSNorm
+    time_norm_bwd: RMSNorm
+    time_sequence_mixer_fwd: SequenceMixer
+    time_sequence_mixer_bwd: SequenceMixer
     time_proj: eqx.nn.Linear
 
-    freq_norm: eqx.nn.LayerNorm
-    freq_sequence_mixer: SequenceMixer
+    freq_norm_fwd: RMSNorm
+    freq_norm_bwd: RMSNorm
+    freq_sequence_mixer_fwd: SequenceMixer
+    freq_sequence_mixer_bwd: SequenceMixer
     freq_proj: eqx.nn.Linear
 
     def __init__(
         self,
         in_features: int,
-        time_sequence_mixer: SequenceMixer,
-        freq_sequence_mixer: SequenceMixer,
+        time_sequence_mixer_fwd: SequenceMixer,
+        time_sequence_mixer_bwd: SequenceMixer,
+        freq_sequence_mixer_fwd: SequenceMixer,
+        freq_sequence_mixer_bwd: SequenceMixer,
         key: PRNGKeyArray,
     ):
         tp_key, fp_key = jr.split(key, 2)
 
-        self.time_sequence_mixer = time_sequence_mixer
-        self.freq_sequence_mixer = freq_sequence_mixer
+        self.time_sequence_mixer_fwd = time_sequence_mixer_fwd
+        self.time_sequence_mixer_bwd = time_sequence_mixer_bwd
+        self.freq_sequence_mixer_fwd = freq_sequence_mixer_fwd
+        self.freq_sequence_mixer_bwd = freq_sequence_mixer_bwd
 
-        self.time_norm = eqx.nn.LayerNorm(shape=in_features)
-        self.freq_norm = eqx.nn.LayerNorm(shape=in_features)
+        self.time_norm_fwd = RMSNorm(in_features)
+        self.time_norm_bwd = RMSNorm(in_features)
+        self.freq_norm_fwd = RMSNorm(in_features)
+        self.freq_norm_bwd = RMSNorm(in_features)
 
-        self.time_proj = eqx.nn.Linear(in_features, in_features, key=tp_key)
-        self.freq_proj = eqx.nn.Linear(in_features, in_features, key=fp_key)
+        self.time_proj = eqx.nn.Linear(2 * in_features, in_features, key=tp_key)
+        self.freq_proj = eqx.nn.Linear(2 * in_features, in_features, key=fp_key)
 
     def __call__(
         self,
@@ -104,8 +120,10 @@ class TFBlock(eqx.Module):
         # Time scan: per (F,) → mixer along T, channels last
         x = self._branch(
             x,
-            norm=self.time_norm,
-            seq=self.time_sequence_mixer,
+            norm_fwd=self.time_norm_fwd,
+            norm_bwd=self.time_norm_bwd,
+            seq_fwd=self.time_sequence_mixer_fwd,
+            seq_bwd=self.time_sequence_mixer_bwd,
             proj=self.time_proj,
             forward_perm=(2, 1, 0),  # [C, T, F] -> [F, T, C]
             inverse_perm=(2, 1, 0),  # [F, T, C] -> [C, T, F]
@@ -114,8 +132,10 @@ class TFBlock(eqx.Module):
         # Freq scan: per (T,) → mixer along F, channels last
         x = self._branch(
             x,
-            norm=self.freq_norm,
-            seq=self.freq_sequence_mixer,
+            norm_fwd=self.freq_norm_fwd,
+            norm_bwd=self.freq_norm_bwd,
+            seq_fwd=self.freq_sequence_mixer_fwd,
+            seq_bwd=self.freq_sequence_mixer_bwd,
             proj=self.freq_proj,
             forward_perm=(1, 2, 0),  # [C, T, F] -> [T, F, C]
             inverse_perm=(2, 0, 1),  # [T, F, C] -> [C, T, F]
@@ -126,18 +146,33 @@ class TFBlock(eqx.Module):
     def _branch(
         self,
         x: Float[Array, "channels frames bins"],
-        norm: eqx.nn.LayerNorm,
-        seq: SequenceMixer,
+        norm_fwd: RMSNorm,
+        norm_bwd: RMSNorm,
+        seq_fwd: SequenceMixer,
+        seq_bwd: SequenceMixer,
         proj: eqx.nn.Linear,
         forward_perm: tuple[int, int, int],
         inverse_perm: tuple[int, int, int],
         key: PRNGKeyArray,
     ) -> Float[Array, "channels frames bins"]:
+        fwd_key, bwd_key = jr.split(key)
         skip_outer = x
-        h_in = jnp.transpose(x, forward_perm)
-        h = jax.vmap(jax.vmap(norm))(h_in)
-        h = jax.vmap(lambda hi: seq(hi, key))(h)
-        h = h + h_in
-        h = jax.vmap(jax.vmap(proj))(h)
+        h_in = jnp.transpose(x, forward_perm)  # (other, seq, C)
+
+        # Forward direction
+        f = jax.vmap(jax.vmap(norm_fwd))(h_in)
+        f = jax.vmap(lambda hi: seq_fwd(hi, fwd_key))(f)
+        f = f + h_in  # inner residual
+
+        # Backward direction (flip the seq axis only, axis 1 after permutation)
+        b_in = jnp.flip(h_in, axis=1)
+        b = jax.vmap(jax.vmap(norm_bwd))(b_in)
+        b = jax.vmap(lambda hi: seq_bwd(hi, bwd_key))(b)
+        b = b + b_in  # inner residual (vs. flipped input, then unflip)
+        b = jnp.flip(b, axis=1)
+
+        # Concat along channels (last) and project 2C → C per token
+        h = jnp.concatenate([f, b], axis=-1)  # (other, seq, 2C)
+        h = jax.vmap(jax.vmap(proj))(h)  # (other, seq, C)
         h = jnp.transpose(h, inverse_perm)
         return skip_outer + h
