@@ -135,7 +135,7 @@ def build_se_linoss(subkey: PRNGKeyArray) -> eqx.Module:
             in_channels=2,
             out_channels=64,
             dense_layers=4,
-            skip_type="residual",
+            skip_type="dense",
         ),
         sequence_mixer_config=MambaStyleLinOSSSequenceMixerConfig(
             state_dim=16,
