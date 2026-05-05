@@ -132,12 +132,12 @@ def build_se_linoss(subkey: PRNGKeyArray) -> eqx.Module:
         num_blocks=2,
         encoder_config=DenseEncoderConfig(
             in_channels=2,
-            out_channels=64,
-            dense_layers=1,
+            out_channels=32,
+            dense_layers=2,
             skip_type="residual",
         ),
         sequence_mixer_config=MambaStyleLinOSSSequenceMixerConfig(
-            state_dim=16,
+            state_dim=32,
             expand=2,
             d_conv=4,
             causal_conv=True,
