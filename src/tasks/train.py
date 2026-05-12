@@ -39,6 +39,7 @@ def train(train_cfg: TrainConfig):
         batch_size=train_cfg.batch_size,
         num_workers=train_cfg.num_workers,
     )
+    epoch_steps = len(train_loader)
 
     key = jax.random.PRNGKey(0)
     key, subkey = jax.random.split(key)
@@ -48,8 +49,9 @@ def train(train_cfg: TrainConfig):
 
     scheduler = optax.exponential_decay(
         init_value=train_cfg.learning_rate,
-        transition_steps=train_cfg.lr_transition_steps,
+        transition_steps=epoch_steps,
         decay_rate=train_cfg.lr_decay,
+        staircase=True,
     )
     optimizer = optax.chain(
         optax.clip_by_global_norm(3.0),
@@ -57,6 +59,7 @@ def train(train_cfg: TrainConfig):
             b1=train_cfg.adam_beta1,
             b2=train_cfg.adam_beta2,
         ),
+        optax.add_decayed_weights(train_cfg.weight_decay),
         optax.scale_by_schedule(scheduler),
         optax.scale(-1.0),
     )
@@ -70,7 +73,6 @@ def train(train_cfg: TrainConfig):
         tx=optimizer,
     )
 
-    epoch_steps = len(train_loader)
     if train_cfg.resume_from_last_chkpt:
         ts = load_checkpoint(train_cfg.ckpt_dir, ts)
         global_step = int(ts.step)
@@ -155,17 +157,17 @@ if __name__ == "__main__":
 
     # jax.config.update("jax_log_compiles", True)
     jax.config.update("jax_default_matmul_precision", "tensorfloat32")
-    jax.config.update("jax_compilation_cache_dir", "/data/7baur/LinaxSE/.jax_cache")
+    jax.config.update("jax_compilation_cache_dir", "/data5/baur/linaxSE/.jax_cache")
     date_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     train_cfg = TrainConfig(
-        batch_size=32,
+        batch_size=4,
         num_workers=16,
         num_epochs=1000,
-        learning_rate=1e-5,
-        lr_transition_steps=10000,
+        learning_rate=5e-4,
         adam_beta1=0.8,
         adam_beta2=0.99,
         lr_decay=0.99,
+        weight_decay=0.01,
         log_interval=20,
         num_audio_samples=15,
         eval_interval=500,

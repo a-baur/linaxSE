@@ -52,11 +52,11 @@ def create_spec(
 
     # 2. Magnitude and dB conversion
     mag = jnp.abs(Zxx)
-    s_db = 20 * jnp.log10(jnp.clip(mag, a_min=1e-10))
+    s_db = 20 * jnp.log10(jnp.clip(mag, min=1e-10))
 
     # Reference to max and apply -80 dB floor
     s_db = s_db - jnp.max(s_db)
-    s_db = jnp.clip(s_db, a_min=-80)
+    s_db = jnp.clip(s_db, min=-80)
 
     # Move to CPU for plotting to prevent Matplotlib warnings
     s_db_np = np.asarray(s_db)

@@ -175,11 +175,11 @@ class TrainConfig:
     batch_size: int = 16
     num_workers: int = 4
     num_epochs: int = 1
-    learning_rate: float = 1e-3
-    lr_transition_steps: int = 1
+    learning_rate: float = 5e-4
     adam_beta1: float = 0.8
-    adam_beta2: float = 0.999
+    adam_beta2: float = 0.99
     lr_decay: float = 0.99
+    weight_decay: float = 0.01
     log_interval: int = 50
     eval_interval: int = 1000
     save_interval: int = 1000
@@ -311,12 +311,6 @@ def load_for_inference(
     return inference_model, ts_loaded.model_state
 
 
-def apply_model(dyn_m, stat_m, inputs, state, key):
-    # Recombine the model before passing data through it
-    m = eqx.combine(dyn_m, stat_m)
-    return m(inputs, state, key)
-
-
 def print_model_summary(model: eqx.Module, with_costs: bool = False):
     """Prints a concise overview of an Equinox model."""
     trainable, static = eqx.partition(model, eqx.is_inexact_array)
@@ -344,12 +338,16 @@ def print_cost_summary(model):
     key = jax.random.PRNGKey(0)
     state = eqx.nn.State(model=model)
 
-    dynamic_model, static_model = eqx.partition(model, eqx.is_array)
-    lowered_model = jax.jit(apply_model, static_argnums=1).lower(
-        dynamic_model, static_model, x, state, key
-    )
-    compiled_model = lowered_model.compile()
-    costs = compiled_model.cost_analysis()
+    dyn_model, static_model = eqx.partition(model, eqx.is_array)
+    dyn_state, static_state = eqx.partition(state, eqx.is_array)
+
+    def call(dm, ds, x, k):
+        m = eqx.combine(dm, static_model)
+        s = eqx.combine(ds, static_state)
+        return m(x, s, k)
+
+    lowered = jax.jit(call).lower(dyn_model, dyn_state, x, key)
+    costs = lowered.compile().cost_analysis()
 
     print(f"\n{' Model Costs ':=^35}")
 

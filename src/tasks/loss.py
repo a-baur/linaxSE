@@ -247,7 +247,7 @@ def multi_res_stft_loss(
 
         sc_loss = jnp.mean(
             jnp.linalg.norm(y_mag - pred_y_mag, ord="fro", axis=(1, 2))
-            / jnp.clip(jnp.linalg.norm(y_mag, ord="fro", axis=(1, 2)), a_min=eps)
+            / jnp.clip(jnp.linalg.norm(y_mag, ord="fro", axis=(1, 2)), min=eps)
         )
         lm_loss = jnp.mean(jnp.abs(jnp.log(pred_y_mag + eps) - jnp.log(y_mag + eps)))
         total_loss += sc_loss + lm_loss
