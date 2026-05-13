@@ -107,13 +107,21 @@ class TrainState(eqx.Module):
     @eqx.filter_jit
     def update(self, x, y, mask):
         key, train_key = jax.random.split(self.key)  # update key for next step
+        params = eqx.filter(self.model, eqx.is_inexact_array)
         (loss_val, new_model_state), grads = eqx.filter_value_and_grad(train_loss, has_aux=True)(
             self.model, x, y, mask, self.model_state, train_key
         )
-        updates, new_opt_state = self.tx.update(
-            grads, self.opt_state, eqx.filter(self.model, eqx.is_inexact_array)
-        )
+        grad_norm = optax.global_norm(grads)
+        updates, new_opt_state = self.tx.update(grads, self.opt_state, params)
+        update_norm = optax.global_norm(updates)
         new_model = eqx.apply_updates(self.model, updates)
+        param_norm = optax.global_norm(eqx.filter(new_model, eqx.is_inexact_array))
+
+        metrics = {
+            "grad_norm": grad_norm,
+            "update_norm": update_norm,
+            "param_norm": param_norm,
+        }
 
         return TrainState(
             model=new_model,
@@ -122,7 +130,7 @@ class TrainState(eqx.Module):
             key=key,
             tx=self.tx,
             step=self.step + 1,
-        ), loss_val
+        ), loss_val, metrics
 
     def evaluate(self, test_loader: DataLoader) -> list[EvalMetric]:
         """Evaluates the model on the test dataset."""
@@ -158,9 +166,16 @@ class TrainState(eqx.Module):
     ]:
         """Generates enhanced samples from the model given noisy input."""
         inference_model = eqx.tree_inference(self.model, value=True)
-        batch = next(iter(test_loader))
-        x = batch["arrays"]["noisy"].numpy()[:num_samples]
-        y = batch["arrays"]["clean"].numpy()[:num_samples]
+        xs, ys = [], []
+        collected = 0
+        for batch in test_loader:
+            xs.append(batch["arrays"]["noisy"].numpy())
+            ys.append(batch["arrays"]["clean"].numpy())
+            collected += xs[-1].shape[0]
+            if collected >= num_samples:
+                break
+        x = np.concatenate(xs, axis=0)[:num_samples]
+        y = np.concatenate(ys, axis=0)[:num_samples]
         output, model_state = jax.vmap(
             inference_model,
             axis_name="batch",

@@ -114,7 +114,7 @@ def train(train_cfg: TrainConfig):
                     profile_active = True
                     print(f"[profile] tracing → {train_cfg.profile_dir}")
 
-                ts, loss_value = ts.update(x, y, mask)
+                ts, loss_value, train_metrics = ts.update(x, y, mask)
 
                 if profile_active and global_step == profile_stop_step - 1:
                     loss_value.block_until_ready()
@@ -129,8 +129,20 @@ def train(train_cfg: TrainConfig):
                 if global_step % train_cfg.log_interval == 0 or is_last_step:
                     pbar.set_postfix({"loss": f"{loss_value:.4f}"})
                     writer.add_scalar("Train/Loss", np.mean(loss_value).item(), global_step)
+                    writer.add_scalar(
+                        "Train/GradNorm", train_metrics["grad_norm"].item(), global_step
+                    )
+                    writer.add_scalar(
+                        "Train/UpdateNorm", train_metrics["update_norm"].item(), global_step
+                    )
+                    writer.add_scalar(
+                        "Train/ParamNorm", train_metrics["param_norm"].item(), global_step
+                    )
+                    writer.add_scalar(
+                        "Train/LearningRate", float(scheduler(global_step)), global_step
+                    )
 
-                if global_step != 0 and global_step % train_cfg.eval_interval == 0 or is_last_step:
+                if global_step % train_cfg.eval_interval == 0 or is_last_step:
                     evaluate(
                         ts,
                         test_loader=test_loader,
